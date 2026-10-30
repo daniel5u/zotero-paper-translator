@@ -40,6 +40,18 @@
       <html:button id="pt-test" data-l10n-id="pt-pref-test"/>
       <html:span id="pt-test-status" class="pt-status"/>
     </html:div>
+    <html:div class="pt-row">
+      <html:label for="pt-max-tokens" data-l10n-id="pt-pref-max-tokens"/>
+      <html:input id="pt-max-tokens" type="number" min="2048" max="32768" step="1024" preference="extensions.paper-translator.maxTokens"/>
+    </html:div>
+    <html:div class="pt-row">
+      <html:label for="pt-thinking" data-l10n-id="pt-pref-thinking"/>
+      <html:select id="pt-thinking" preference="extensions.paper-translator.thinking">
+        <html:option value="" data-l10n-id="pt-pref-thinking-default"/>
+        <html:option value="disabled" data-l10n-id="pt-pref-thinking-disabled"/>
+        <html:option value="enabled" data-l10n-id="pt-pref-thinking-enabled"/>
+      </html:select>
+    </html:div>
   </html:div>
 
   <html:div class="pt-section">
@@ -52,14 +64,6 @@
         <html:option value="ja" data-l10n-id="pt-lang-ja"/>
         <html:option value="ko" data-l10n-id="pt-lang-ko"/>
         <html:option value="en" data-l10n-id="pt-lang-en"/>
-      </html:select>
-    </html:div>
-    <html:div class="pt-row">
-      <html:label for="pt-output" data-l10n-id="pt-pref-output"/>
-      <html:select id="pt-output" preference="extensions.paper-translator.output">
-        <html:option value="mono" data-l10n-id="pt-pref-output-mono"/>
-        <html:option value="dual" data-l10n-id="pt-pref-output-dual"/>
-        <html:option value="both" data-l10n-id="pt-pref-output-both"/>
       </html:select>
     </html:div>
     <html:div class="pt-row">

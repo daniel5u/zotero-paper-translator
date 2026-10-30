@@ -1,13 +1,46 @@
-paper-translator-menu-translate =
-    .label = Translate Full PDF
-paper-translator-menu-status =
-    .label = { $queued ->
-        [0] { $name }: { $status }
-       *[other] { $name }: { $status } (+{ $queued } queued)
-    }
-paper-translator-menu-cancel =
-    .label = Cancel PDF Translation
-
+paper-translator-menu-text-translation =
+    .label = Text Translation…
+pt-text-translation-open = Text translation
+pt-text-translation-tab-title = Text translation - { $title }
+pt-text-translation-launch = Open text translation
+pt-text-translation-progress = Text translation progress
+pt-text-translation-preparing = Preparing document…
+pt-text-translation-parsing = Parsing…
+pt-text-translation-running = Translating…
+pt-text-translation-refreshing = Updating PDF…
+pt-text-translation-count = { $completed }/{ $total } paragraphs
+pt-text-translation-ready = Document ready
+pt-text-translation-parsed = Parsing complete
+pt-text-translation-completed = Translation complete
+pt-text-translation-partial = Translation complete. Failed paragraphs: { $failed }
+pt-text-translation-stopped = Translation stopped
+pt-text-translation-exported = Export complete
+pt-text-translation-exporting = Exporting…
+pt-reader-pages = Pages
+pt-reader-pages-label = Pages to translate
+pt-reader-pages-placeholder = 1-10, 12
+pt-reader-select-main = Main text
+pt-reader-select-all = All
+pt-reader-select-none = Clear
+pt-reader-chapter = Chapter
+pt-reader-chapter-placeholder = Chapter…
+pt-reader-translate = Translate
+pt-reader-retry-failed = Retry failed
+pt-reader-stop = Stop
+pt-reader-output-label = Export format
+pt-reader-output-dual = Bilingual PDF
+pt-reader-output-mono = Translated PDF
+pt-reader-output-both = Both
+pt-reader-export = Export
+pt-reader-selection-summary = { $selected } selected · { $translated } translated
+pt-reader-translate-paragraph = Translate this paragraph
+pt-reader-retranslate-paragraph = Retranslate this paragraph
+pt-attachment-text-translation = Text translation
+pt-pref-max-tokens = Maximum output tokens
+pt-pref-thinking = DeepSeek thinking mode
+pt-pref-thinking-default = Model default
+pt-pref-thinking-disabled = Disabled
+pt-pref-thinking-enabled = Enabled
 pt-pref-api-heading = API
 pt-pref-base-url = Base URL
 pt-pref-api-key = API Key
@@ -21,13 +54,9 @@ pt-pref-reasoning-high = High
 pt-pref-test = Test Connection
 pt-pref-translate-heading = Translation
 pt-pref-lang-out = Target language
-pt-pref-output = Output
-pt-pref-output-mono = Translation only
-pt-pref-output-dual = Side-by-side bilingual
-pt-pref-output-both = Both
 pt-pref-qps = Concurrent requests
 pt-pref-prompt = System prompt
-pt-pref-open = Open the translation when done
+pt-pref-open = Open the exported PDF
 pt-pref-env-heading = Environment
 pt-pref-uv-path = Path to uv (leave empty to detect)
 pt-pref-env-setup = Set Up / Repair Environment
@@ -47,34 +76,15 @@ pt-setup-install = Installing dependencies (a few minutes the first time)…
 pt-setup-warmup = Downloading layout model and fonts…
 pt-test-running = Testing…
 pt-test-ok = Connection works
-
-pt-progress-headline = PDF Translation
-pt-progress-queued = { $ahead ->
-        [0] Queued
-        [one] Queued, 1 paper ahead
-       *[other] Queued, { $ahead } papers ahead
-    }
-pt-progress-starting = Starting the translation engine…
-pt-progress-status = { $status } · { $elapsed } elapsed
-pt-progress-stage = { $stage } { $percent }%
-pt-progress-done = Done
-pt-progress-done-partial = Done, but { $count } translation requests failed and some paragraphs kept the source text
-pt-progress-cancelled = Cancelled
-pt-progress-failed = Failed, see the error dialog
-
-pt-stage-parse = Parsing PDF
-pt-stage-scan = Checking for scans
-pt-stage-layout = Analyzing layout
-pt-stage-table = Detecting tables
-pt-stage-paragraphs = Finding paragraphs
-pt-stage-formulas = Finding formulas
-pt-stage-terms = Extracting terms
-pt-stage-translate = Translating
-pt-stage-typeset = Typesetting
-pt-stage-fonts = Embedding fonts
-pt-stage-render = Rendering pages
-pt-stage-subset = Subsetting fonts
-pt-stage-save = Saving PDF
+pt-status-translating-page = Translating page { $page }…
+pt-status-retrying = Retrying ({ $attempt }/{ $maximum })…
+pt-status-queued-paragraphs = Queued paragraphs: { $count }
+pt-status-stopping = Stopping…
+pt-stage-parse-structure = Parsing PDF structure…
+pt-stage-detect-layout = Detecting text, tables and figures…
+pt-stage-prepare-paragraphs = Grouping paragraphs and preserving formulas…
+pt-stage-typeset = Typesetting…
+pt-stage-export = Exporting PDF…
 
 pt-error-missing-settings = Enter the base URL, API key and model in the settings first.
 pt-error-uv-not-found = uv was not found. Install uv (e.g. brew install uv) or set its path in the settings.
@@ -83,9 +93,21 @@ pt-error-auth = Invalid API key: { $detail }
 pt-error-not-found = Base URL or model not found: { $detail }
 pt-error-connection = Cannot reach the base URL: { $detail }
 pt-error-api = The API returned an error: { $detail }. If the model rejects the reasoning parameter, set reasoning effort to "Don't send".
-pt-error-nothing-translated = Every translation request failed ({ $detail }). Check the API settings.
 pt-error-no-file = The PDF file is missing
 pt-error-unknown = Translation failed: { $detail }. Log: { $log }
+pt-error-invalid-pages = Invalid page range. Use a range such as 1-10,12.
+pt-error-task-busy = A task is still running.
+pt-error-process-exit = Process exited ({ $code })
+pt-error-with-log = { $detail }
+    Log: { $log }
+pt-error-preview-update = Could not update the translation preview attachment.
+pt-error-reader-open = Could not open the translation reader tab.
+pt-error-selection-translated = This selection already has translations. Right-click a paragraph to translate it again.
+pt-error-parse-pending = PDF structure parsing is not finished yet.
+pt-error-export-missing = No PDF file was generated.
+pt-error-selection-save = Could not save the selection: { $detail }
+pt-error-source-deleted = The original PDF attachment was deleted.
+pt-error-no-paragraph = No translatable paragraph was found here.
 
 pt-attachment-mono = Translation ({ $lang })
 pt-attachment-dual = Bilingual ({ $lang })

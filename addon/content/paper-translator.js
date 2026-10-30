@@ -7,34 +7,15 @@ const PREF_BRANCH = "extensions.paper-translator.";
 const PROTOCOL_PREFIX = "@@PT ";
 const PYTHON_VERSION = "3.12";
 const LOG_LINES_KEPT = 300;
-// File names are cut to this many characters in status lines
-const STATUS_NAME_LENGTH = 30;
 const OUTPUT_LANGS = ["zh", "zh-TW", "ja", "ko", "en"];
 // Recognizes our own output files so they are never offered for translation
 const OUTPUT_FILE_RE = new RegExp(`\\.(${OUTPUT_LANGS.join("|")})(\\.dual)?\\.pdf$`, "i");
-
-const STAGE_L10N = {
-  "Parse PDF and Create Intermediate Representation": "pt-stage-parse",
-  DetectScannedFile: "pt-stage-scan",
-  "Parse Page Layout": "pt-stage-layout",
-  "Parse Table": "pt-stage-table",
-  "Parse Paragraphs": "pt-stage-paragraphs",
-  "Parse Formulas and Styles": "pt-stage-formulas",
-  "Automatic Term Extraction": "pt-stage-terms",
-  "Translate Paragraphs": "pt-stage-translate",
-  Typesetting: "pt-stage-typeset",
-  "Add Fonts": "pt-stage-fonts",
-  "Generate drawing instructions": "pt-stage-render",
-  "Subset font": "pt-stage-subset",
-  "Save PDF": "pt-stage-save",
-};
 
 const RUNNER_ERROR_L10N = {
   auth: "pt-error-auth",
   not_found: "pt-error-not-found",
   connection: "pt-error-connection",
   api: "pt-error-api",
-  nothing_translated: "pt-error-nothing-translated",
 };
 
 /** An error whose message is already localized for the user. */
@@ -47,9 +28,13 @@ PaperTranslator = {
   l10n: null,
   menuIDs: [],
   prefPaneID: null,
-  queue: [],
-  current: null,
   setupPromise: null,
+  textTranslations: new Map(),
+  readerHandler: null,
+  readerContextHandler: null,
+  readerBindings: new Set(),
+  readerRegistry: {},
+  registryWrite: Promise.resolve(),
 
   init({ id, version, rootURI }) {
     this.id = id;
@@ -61,7 +46,45 @@ PaperTranslator = {
     this.l10n = new Localization(["paper-translator.ftl"], true);
     // The preferences pane runs in its own scope and reaches the plugin here
     Zotero.PaperTranslator = this;
+    this.nativeCSS = await Zotero.File.getResourceAsync(this.rootURI + "content/native-reader.css");
+    try { this.readerRegistry = JSON.parse(await IOUtils.readUTF8(PathUtils.join(this.dataDir, "native-readers.json"))); }
+    catch { this.readerRegistry = {}; }
     this.registerMenus();
+    this.readerHandler = (event) => {
+      if (event.reader.type !== "pdf") return;
+      for (let binding of this.readerBindings) {
+        if (binding.reader === event.reader && binding.doc === event.doc) binding.dispose();
+      }
+      let binding = new PaperTranslatorNativeReader(this, event.reader, event.doc, event.append);
+      this.readerBindings.add(binding);
+      let translation = [...this.textTranslations.values()].find(w => w.readerItem?.id === event.reader.itemID);
+      if (translation) binding.bind(translation);
+      else if (binding.isTextTranslation) {
+        this.openTextTranslation(Zotero.Items.get(event.reader.itemID), { reader: event.reader, activate: false })
+          .catch(error => binding.error(String(error.message || error)));
+      }
+    };
+    this.readerContextHandler = (event) => {
+      if (event.reader.type !== "pdf" || !event.params.position?.rects?.length) return;
+      let translation = [...this.textTranslations.values()].find(w => w.readerItem?.id === event.reader.itemID);
+      if (translation?.session?.parse_status !== "ready") return;
+      let item = Zotero.Items.get(event.reader.itemID);
+      let paragraph = translation?.paragraphAt(event.params.position, event.reader);
+      if (!paragraph) return;
+      event.append({
+        label: paragraph?.translation ? this.t("pt-reader-retranslate-paragraph") : this.t("pt-reader-translate-paragraph"),
+        onCommand: () => {
+          this.translateAt(item, event.params.position, event.reader).catch(error => {
+            Zotero.logError(error);
+            let binding = [...this.readerBindings].find(b => b.reader.itemID === item.id);
+            if (binding) binding.error(String(error.message || error));
+            else Zotero.alert(null, this.t("pt-text-translation-open"), String(error.message || error));
+          });
+        },
+      });
+    };
+    Zotero.Reader.registerEventListener("renderToolbar", this.readerHandler, this.id);
+    Zotero.Reader.registerEventListener("createViewContextMenu", this.readerContextHandler, this.id);
     this.prefPaneID = await Zotero.PreferencePanes.register({
       pluginID: this.id,
       src: this.rootURI + "content/preferences.xhtml",
@@ -70,12 +93,15 @@ PaperTranslator = {
     for (let win of Zotero.getMainWindows()) {
       this.addToWindow(win);
     }
-    // Leftovers from jobs interrupted by quitting Zotero
-    IOUtils.remove(this.jobsDir, { recursive: true, ignoreAbsent: true }).catch((e) => Zotero.logError(e));
   },
 
   shutdown() {
-    this.cancelAll();
+    for (let translation of this.textTranslations.values()) translation.close();
+    this.textTranslations.clear();
+    if (this.readerHandler) Zotero.Reader.unregisterEventListener("renderToolbar", this.readerHandler);
+    if (this.readerContextHandler) Zotero.Reader.unregisterEventListener("createViewContextMenu", this.readerContextHandler);
+    for (let binding of this.readerBindings) binding.dispose();
+    this.readerBindings.clear();
     for (let menuID of this.menuIDs) {
       Zotero.MenuManager.unregisterMenu(menuID);
     }
@@ -98,52 +124,28 @@ PaperTranslator = {
   },
 
   registerMenus() {
-    let itemMenuID = Zotero.MenuManager.registerMenu({
+    let menuID = Zotero.MenuManager.registerMenu({
       menuID: "paper-translator-item",
       pluginID: this.id,
       target: "main/library/item",
-      menus: [
-        {
-          menuType: "menuitem",
-          l10nID: "paper-translator-menu-translate",
-          icon: this.rootURI + "content/icon.svg",
-          onShowing: (event, context) => {
-            context.setVisible(this.getPDFAttachments(context.items).length > 0);
-          },
-          onCommand: (event, context) => {
-            this.enqueue(context.items);
-          },
+      menus: [{
+        menuType: "menuitem",
+        l10nID: "paper-translator-menu-text-translation",
+        icon: this.rootURI + "content/icon.svg",
+        onShowing: (event, context) => {
+          context.setVisible(this.getPDFAttachments(context.items).length > 0);
         },
-      ],
+        onCommand: (event, context) => {
+          for (let attachment of this.getPDFAttachments(context.items)) {
+            this.openTextTranslation(attachment).catch(error => {
+              Zotero.logError(error);
+              Zotero.alert(null, this.t("pt-text-translation-open"), String(error.message || error));
+            });
+          }
+        },
+      }],
     });
-    let toolsMenuID = Zotero.MenuManager.registerMenu({
-      menuID: "paper-translator-tools",
-      pluginID: this.id,
-      target: "main/menubar/tools",
-      menus: [
-        {
-          // Where to check on a job once its progress popup is out of sight
-          menuType: "menuitem",
-          l10nID: "paper-translator-menu-status",
-          onShowing: (event, context) => {
-            context.setVisible(!!this.current);
-            context.setEnabled(false);
-            if (this.current) {
-              context.setL10nArgs(JSON.stringify(this.statusArgs()));
-            }
-          },
-        },
-        {
-          menuType: "menuitem",
-          l10nID: "paper-translator-menu-cancel",
-          onShowing: (event, context) => {
-            context.setEnabled(!!this.current);
-          },
-          onCommand: () => this.cancelAll(),
-        },
-      ],
-    });
-    this.menuIDs = [itemMenuID, toolsMenuID].filter(Boolean);
+    this.menuIDs = [menuID].filter(Boolean);
   },
 
   // Preferences
@@ -160,10 +162,10 @@ PaperTranslator = {
       langOut: this.getPref("langOut") || "zh",
       reasoning: this.getPref("reasoning") || "",
       qps: parseInt(this.getPref("qps")) || 4,
-      output: this.getPref("output") || "mono",
       customPrompt: (this.getPref("customPrompt") || "").trim(),
       openWhenDone: !!this.getPref("openWhenDone"),
-      pages: (this.getPref("pages") || "").trim(),
+      maxTokens: parseInt(this.getPref("maxTokens")) || 8192,
+      thinking: this.getPref("thinking") || "",
     };
   },
 
@@ -173,6 +175,8 @@ PaperTranslator = {
       api_key: settings.apiKey,
       model: settings.model,
       reasoning: settings.reasoning,
+      max_tokens: settings.maxTokens,
+      thinking: settings.thinking,
     };
   },
 
@@ -184,10 +188,6 @@ PaperTranslator = {
 
   get dataDir() {
     return PathUtils.join(Zotero.DataDirectory.dir, "paper-translator");
-  },
-
-  get jobsDir() {
-    return PathUtils.join(this.dataDir, "jobs");
   },
 
   get venvDir() {
@@ -225,10 +225,11 @@ PaperTranslator = {
 
   async installPythonFiles() {
     await IOUtils.makeDirectory(this.dataDir, { ignoreExisting: true });
-    for (let name of ["runner.py", "requirements.lock"]) {
+    for (let name of ["runner.py", "text_translation.py", "translation.py", "requirements.lock"]) {
       let text = await this.readBundledPythonFile(name);
       await IOUtils.writeUTF8(PathUtils.join(this.dataDir, name), text);
     }
+    await IOUtils.remove(PathUtils.join(this.dataDir, "workspace.py"), { ignoreAbsent: true });
   },
 
   async isEnvironmentReady() {
@@ -398,7 +399,72 @@ PaperTranslator = {
     return this.t("pt-error-unknown", { detail: result?.message || "?", log: logPath });
   },
 
-  // Translation queue
+  // Text translation
+
+  isTextTranslationReader(reader) {
+    let item = Zotero.Items.get(reader.itemID);
+    return !!(item && this.readerRegistry[`${item.libraryID}/${item.key}`])
+      || [...this.textTranslations.values()].some(translation => translation.readerItem?.id === reader.itemID);
+  },
+
+  sourceFor(attachment) {
+    let link = this.readerRegistry[`${attachment.libraryID}/${attachment.key}`];
+    if (!link) return attachment;
+    let source = Zotero.Items.getByLibraryAndKey(link.libraryID, link.sourceKey);
+    if (!source || source.deleted) throw new Error(this.t("pt-error-source-deleted"));
+    return source;
+  },
+
+  async rememberReader(translation) {
+    this.readerRegistry[`${translation.readerItem.libraryID}/${translation.readerItem.key}`] = {
+      libraryID: translation.attachment.libraryID, sourceKey: translation.attachment.key,
+      lang: translation.lang,
+    };
+    let text = JSON.stringify(this.readerRegistry);
+    this.registryWrite = this.registryWrite.catch(() => {}).then(async () => {
+      let path = PathUtils.join(this.dataDir, "native-readers.json");
+      await IOUtils.writeUTF8(path, text, { tmpPath: path + ".tmp" });
+    });
+    await this.registryWrite;
+  },
+
+  async openTextTranslation(attachment, options = {}) {
+    if (!attachment?.isPDFAttachment?.()) return;
+    let readerItem = attachment;
+    let link = this.readerRegistry[`${attachment.libraryID}/${attachment.key}`];
+    attachment = this.sourceFor(attachment);
+    let lang = link?.lang || this.getSettings().langOut;
+    let key = `${attachment.libraryID}-${attachment.key}-${lang}`;
+    let translation = this.textTranslations.get(key);
+    if (!translation || translation.closed) {
+      translation = new PaperTranslatorTextTranslation(this, attachment, () => this.textTranslations.delete(key), lang);
+      this.textTranslations.set(key, translation);
+    }
+    translation.openMenuRequested ||= !!options.showMenu;
+    if (options.reader && link) {
+      translation.readerItem = readerItem;
+      translation.reader = options.reader;
+      translation.readers.add(options.reader);
+      for (let binding of this.readerBindings) if (binding.reader === options.reader) binding.bind(translation);
+    }
+    if (translation.readerItem && options.activate !== false) {
+      await translation.showNativeTab();
+      if (options.showMenu) {
+        for (let binding of this.readerBindings) if (binding.reader.itemID === translation.readerItem.id) binding.show();
+      }
+    }
+    await translation.init({ showReader: options.activate !== false });
+    return translation;
+  },
+
+  async translateAt(attachment, position, reader) {
+    let translation = [...this.textTranslations.values()].find(w => w.readerItem?.id === reader.itemID);
+    if (!translation || translation.session?.parse_status !== "ready" || attachment.id !== reader.itemID) return;
+    let paragraph = translation.paragraphAt(position, reader);
+    if (!paragraph) throw new Error(this.t("pt-error-no-paragraph"));
+    await translation.translate([paragraph.id]);
+    return translation;
+  },
 
   isTranslationOutput(attachment) {
     return OUTPUT_FILE_RE.test(attachment.attachmentFilename || "");
@@ -425,208 +491,6 @@ PaperTranslator = {
       }
     }
     return attachments;
-  },
-
-  enqueue(items) {
-    let settings = this.getSettings();
-    if (!settings.baseURL || !settings.apiKey || !settings.model) {
-      Zotero.alert(null, this.t("pt-progress-headline"), this.t("pt-error-missing-settings"));
-      Zotero.Utilities.Internal.openPreferences(this.prefPaneID);
-      return;
-    }
-    let pending = new Set([this.current?.attachment.id, ...this.queue.map((job) => job.attachment.id)]);
-    for (let attachment of this.getPDFAttachments(items)) {
-      if (pending.has(attachment.id)) {
-        continue;
-      }
-      let job = { attachment, proc: null, cancelled: false, status: "", percent: 0, startedAt: null };
-      job.progress = this.createProgress(job);
-      this.queue.push(job);
-    }
-    this.refreshQueuedStatus();
-    this.processQueue();
-  },
-
-  async processQueue() {
-    if (this.current) {
-      return;
-    }
-    while (this.queue.length) {
-      let job = this.current = this.queue.shift();
-      job.startedAt = Date.now();
-      this.setStatus(job, this.t("pt-progress-starting"));
-      this.refreshQueuedStatus();
-      this.tickElapsed(job);
-      try {
-        await this.translate(job);
-      }
-      catch (e) {
-        Zotero.logError(e);
-        job.progress.fail(e instanceof UserError ? e.message : String(e));
-      }
-      finally {
-        this.current = null;
-      }
-    }
-  },
-
-  cancelAll() {
-    for (let job of this.queue) {
-      job.progress.finish(this.t("pt-progress-cancelled"));
-    }
-    this.queue = [];
-    if (this.current) {
-      this.current.cancelled = true;
-      this.current.proc?.kill();
-    }
-  },
-
-  // Job status
-
-  setStatus(job, status, percent) {
-    job.status = status;
-    if (percent !== undefined) {
-      job.percent = percent;
-    }
-    job.progress.render();
-  },
-
-  refreshQueuedStatus() {
-    this.queue.forEach((job, index) => {
-      this.setStatus(job, this.t("pt-progress-queued", { ahead: index + (this.current ? 1 : 0) }));
-    });
-  },
-
-  /** Redraw the running job every second so the elapsed time shows it is alive during long silent steps. */
-  async tickElapsed(job) {
-    while (this.current === job) {
-      job.progress.render();
-      await Zotero.Promise.delay(1000);
-    }
-  },
-
-  statusText(job) {
-    if (!job.startedAt) {
-      return job.status;
-    }
-    let seconds = Math.floor((Date.now() - job.startedAt) / 1000);
-    let elapsed = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-    return this.t("pt-progress-status", { status: job.status, elapsed });
-  },
-
-  /** Arguments for the Tools menu status line. */
-  statusArgs() {
-    return {
-      name: this.shortName(this.current.attachment),
-      status: this.statusText(this.current),
-      queued: this.queue.length,
-    };
-  },
-
-  shortName(attachment) {
-    let name = attachment.attachmentFilename.replace(/\.pdf$/i, "");
-    return name.length > STATUS_NAME_LENGTH ? name.slice(0, STATUS_NAME_LENGTH) + "…" : name;
-  },
-
-  /**
-   * One progress popup per job: the file name on the first line, the status on
-   * a second line of its own so a long file name can never push it out of view.
-   */
-  createProgress(job) {
-    let win = new Zotero.ProgressWindow({ closeOnClick: false });
-    win.changeHeadline(this.t("pt-progress-headline"));
-    let fileLine = new win.ItemProgress(job.attachment.getItemTypeIconName(), this.shortName(job.attachment));
-    let statusLine = new win.ItemProgress(null, "", fileLine);
-    // Lines are drawn faded until marked complete; the status should be readable throughout
-    statusLine.setProgress(100);
-    win.show();
-    let ended = false;
-    return {
-      render: () => {
-        if (!ended) {
-          fileLine.setProgress(job.percent);
-          statusLine.setText(this.statusText(job));
-        }
-      },
-      finish: (status) => {
-        job.status = status;
-        statusLine.setText(this.statusText(job));
-        fileLine.setProgress(100);
-        ended = true;
-        win.startCloseTimer(8000);
-      },
-      fail: (message) => {
-        ended = true;
-        fileLine.setProgress(100);
-        statusLine.setError();
-        statusLine.setText(this.t("pt-progress-failed"));
-        win.startCloseTimer(15000);
-        // The progress popup is too narrow for error details
-        Zotero.alert(null, `${this.t("pt-progress-headline")}: ${job.attachment.attachmentFilename}`, message);
-      },
-    };
-  },
-
-  async translate(job) {
-    let { attachment, progress } = job;
-    let settings = this.getSettings();
-    await this.ensureEnvironment((status) => this.setStatus(job, status));
-    let inputPath = await attachment.getFilePathAsync();
-    if (!inputPath) {
-      throw new UserError(this.t("pt-error-no-file"));
-    }
-
-    let jobDir = PathUtils.join(this.jobsDir, Zotero.Utilities.randomString(8));
-    await IOUtils.makeDirectory(jobDir, { createAncestors: true });
-    try {
-      let { result, log } = await this.run(this.venvPython, [this.runnerPath, "translate"], {
-        input: JSON.stringify({
-          ...this.apiJob(settings),
-          input: inputPath,
-          output_dir: jobDir,
-          lang_out: settings.langOut,
-          qps: settings.qps,
-          output: settings.output,
-          custom_prompt: settings.customPrompt,
-          pages: settings.pages,
-        }),
-        onSpawn: (proc) => {
-          job.proc = proc;
-        },
-        onMessage: (message) => {
-          if (message.type === "progress") {
-            let stage = STAGE_L10N[message.stage] ? this.t(STAGE_L10N[message.stage]) : message.stage;
-            this.setStatus(job, this.t("pt-progress-stage", { stage, percent: Math.round(message.overall) }), message.overall);
-          }
-        },
-      });
-      if (job.cancelled) {
-        progress.finish(this.t("pt-progress-cancelled"));
-        return;
-      }
-      if (result?.type !== "done") {
-        throw new UserError(await this.describeRunnerError(result, log));
-      }
-
-      let added = [];
-      for (let [path, dual] of [[result.mono, false], [result.dual, true]]) {
-        if (path) {
-          added.push(await this.attachOutput(attachment, path, settings.langOut, dual));
-        }
-      }
-      progress.finish(
-        result.failed_requests
-          ? this.t("pt-progress-done-partial", { count: result.failed_requests })
-          : this.t("pt-progress-done")
-      );
-      if (settings.openWhenDone && added.length) {
-        // Don't hold up the queue on the reader tab
-        Zotero.Reader.open(added[0].id).catch((e) => Zotero.logError(e));
-      }
-    }
-    finally {
-      await IOUtils.remove(jobDir, { recursive: true, ignoreAbsent: true });
-    }
   },
 
   /** Import a translated PDF next to the original attachment. */

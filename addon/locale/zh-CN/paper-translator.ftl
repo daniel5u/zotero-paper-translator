@@ -1,13 +1,46 @@
-paper-translator-menu-translate =
-    .label = 翻译 PDF 全文
-paper-translator-menu-status =
-    .label = { $queued ->
-        [0] { $name }：{ $status }
-       *[other] { $name }：{ $status }（另有 { $queued } 篇排队）
-    }
-paper-translator-menu-cancel =
-    .label = 取消 PDF 翻译
-
+paper-translator-menu-text-translation =
+    .label = 文本翻译 PDF…
+pt-text-translation-open = 文本翻译
+pt-text-translation-tab-title = 文本翻译 - { $title }
+pt-text-translation-launch = 打开文本翻译
+pt-text-translation-progress = 文本翻译进度
+pt-text-translation-preparing = 准备文档…
+pt-text-translation-parsing = 解析文档…
+pt-text-translation-running = 翻译中…
+pt-text-translation-refreshing = 更新页面…
+pt-text-translation-count = { $completed }/{ $total } 段
+pt-text-translation-ready = 文档已就绪
+pt-text-translation-parsed = 解析已完成
+pt-text-translation-completed = 翻译已完成
+pt-text-translation-partial = 翻译已完成，{ $failed } 段失败
+pt-text-translation-stopped = 翻译已停止
+pt-text-translation-exported = 导出已完成
+pt-text-translation-exporting = 导出中…
+pt-reader-pages = 页码
+pt-reader-pages-label = 翻译页码
+pt-reader-pages-placeholder = 1-10, 12
+pt-reader-select-main = 正文
+pt-reader-select-all = 全部
+pt-reader-select-none = 清空
+pt-reader-chapter = 章节
+pt-reader-chapter-placeholder = 章节…
+pt-reader-translate = 翻译
+pt-reader-retry-failed = 重试失败
+pt-reader-stop = 停止
+pt-reader-output-label = 导出类型
+pt-reader-output-dual = 双语 PDF
+pt-reader-output-mono = 译文 PDF
+pt-reader-output-both = 两者
+pt-reader-export = 导出
+pt-reader-selection-summary = 已选 { $selected } 段 · 已译 { $translated } 段
+pt-reader-translate-paragraph = 翻译此段
+pt-reader-retranslate-paragraph = 重新翻译此段
+pt-attachment-text-translation = 文本翻译
+pt-pref-max-tokens = 输出 token 上限
+pt-pref-thinking = DeepSeek 思考模式
+pt-pref-thinking-default = 由模型决定
+pt-pref-thinking-disabled = 关闭思考
+pt-pref-thinking-enabled = 开启思考
 pt-pref-api-heading = API 设置
 pt-pref-base-url = API 地址
 pt-pref-api-key = API Key
@@ -21,13 +54,9 @@ pt-pref-reasoning-high = 高
 pt-pref-test = 测试连接
 pt-pref-translate-heading = 翻译设置
 pt-pref-lang-out = 目标语言
-pt-pref-output = 生成文件
-pt-pref-output-mono = 仅译文
-pt-pref-output-dual = 双语对照
-pt-pref-output-both = 两者都要
 pt-pref-qps = 并发请求数
 pt-pref-prompt = 系统提示词
-pt-pref-open = 翻译完成后自动打开
+pt-pref-open = 导出后自动打开
 pt-pref-env-heading = 运行环境
 pt-pref-uv-path = uv 路径（留空则自动查找）
 pt-pref-env-setup = 初始化 / 修复环境
@@ -47,33 +76,15 @@ pt-setup-install = 正在安装依赖（首次需要几分钟）…
 pt-setup-warmup = 正在下载版面模型和字体…
 pt-test-running = 正在测试…
 pt-test-ok = 连接成功
-
-pt-progress-headline = PDF 全文翻译
-pt-progress-queued = { $ahead ->
-        [0] 排队中
-       *[other] 排队中，前面还有 { $ahead } 篇
-    }
-pt-progress-starting = 正在启动翻译引擎…
-pt-progress-status = { $status } · 已用时 { $elapsed }
-pt-progress-stage = { $stage } { $percent }%
-pt-progress-done = 完成
-pt-progress-done-partial = 完成，但有 { $count } 个翻译请求失败，部分段落保留了原文
-pt-progress-cancelled = 已取消
-pt-progress-failed = 失败，详情见弹出的提示
-
-pt-stage-parse = 解析 PDF
-pt-stage-scan = 检测扫描件
-pt-stage-layout = 分析版面
-pt-stage-table = 识别表格
-pt-stage-paragraphs = 识别段落
-pt-stage-formulas = 识别公式
-pt-stage-terms = 提取术语
-pt-stage-translate = 翻译
-pt-stage-typeset = 排版
-pt-stage-fonts = 嵌入字体
-pt-stage-render = 生成页面
-pt-stage-subset = 精简字体
-pt-stage-save = 保存 PDF
+pt-status-translating-page = 翻译第 { $page } 页…
+pt-status-retrying = 重试中（{ $attempt }/{ $maximum }）…
+pt-status-queued-paragraphs = 已排队 { $count } 段
+pt-status-stopping = 正在停止…
+pt-stage-parse-structure = 解析 PDF 结构…
+pt-stage-detect-layout = 识别正文、图表与公式区域…
+pt-stage-prepare-paragraphs = 组合段落并保护公式…
+pt-stage-typeset = 排版译文…
+pt-stage-export = 排版并导出 PDF…
 
 pt-error-missing-settings = 请先在设置中填写 API 地址、API Key 和模型。
 pt-error-uv-not-found = 找不到 uv。请先安装 uv（例如 brew install uv），或在设置中填写 uv 的路径。
@@ -82,9 +93,21 @@ pt-error-auth = API Key 无效：{ $detail }
 pt-error-not-found = API 地址或模型不存在：{ $detail }
 pt-error-connection = 无法连接 API 地址：{ $detail }
 pt-error-api = API 返回错误：{ $detail }。如果模型不支持“思考强度”参数，请在设置中改为“不发送”。
-pt-error-nothing-translated = 所有翻译请求都失败了（{ $detail }），请检查 API 设置。
 pt-error-no-file = 找不到 PDF 文件
 pt-error-unknown = 翻译失败：{ $detail }。日志：{ $log }
+pt-error-invalid-pages = 页码无效，例如 1-10,12。
+pt-error-task-busy = 当前任务仍在进行。
+pt-error-process-exit = 进程退出（{ $code }）
+pt-error-with-log = { $detail }
+    日志：{ $log }
+pt-error-preview-update = 无法更新翻译预览附件。
+pt-error-reader-open = 无法打开翻译阅读标签页。
+pt-error-selection-translated = 所选内容已有译文，可在段落上右键重新翻译。
+pt-error-parse-pending = 结构解析尚未完成。
+pt-error-export-missing = 未生成 PDF 文件。
+pt-error-selection-save = 保存选择失败：{ $detail }
+pt-error-source-deleted = 原 PDF 附件已删除。
+pt-error-no-paragraph = 此处没有识别到可翻译的段落。
 
 pt-attachment-mono = 译文（{ $lang }）
 pt-attachment-dual = 双语对照（{ $lang }）

@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: Xpi build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Build XPI
+        run: ./scripts/build.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: paper-translator-ubuntu
+          path: build/*.xpi
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: publish-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Build XPI
+        run: ./scripts/build.sh
+      - name: Validate release version and generate update manifest
+        env:
+          REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python scripts/generate_update.py build/*.xpi --repository "$REPOSITORY" --tag "$RELEASE_TAG" --output "$RUNNER_TEMP/update.json"
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" build/*.xpi "$RUNNER_TEMP/update.json" --verify-tag --title "$RELEASE_TAG" --generate-notes

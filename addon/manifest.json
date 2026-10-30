@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Paper Translator",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Translate whole PDF papers with BabelDOC and your own OpenAI-compatible API, keeping the original layout.",
   "author": "daniel5u",
   "homepage_url": "https://github.com/daniel5u/zotero-paper-translator",
@@ -12,7 +12,7 @@
   "applications": {
     "zotero": {
       "id": "paper-translator@danielsu.local",
-      "update_url": "https://raw.githubusercontent.com/daniel5u/zotero-paper-translator/main/update.json",
+      "update_url": "https://github.com/daniel5u/zotero-paper-translator/releases/latest/download/update.json",
       "strict_min_version": "7.0",
       "strict_max_version": "10.*"
     }
