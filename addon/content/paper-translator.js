@@ -1,4 +1,4 @@
-/* global Zotero, Services, ChromeUtils, IOUtils, PathUtils, Localization */
+/* global Zotero, Services, ChromeUtils, IOUtils, PathUtils, Localization, PaperTranslatorQueue, PaperTranslatorTextTranslation, PaperTranslatorNativeReader */
 
 var { Subprocess } = ChromeUtils.importESModule("resource://gre/modules/Subprocess.sys.mjs");
 
@@ -14,6 +14,8 @@ const SESSION_CACHE_DAYS = 7;
 const SESSION_CLEANUP_DELAY_MS = 60 * 1000;
 // Everything in a session folder except the translations and small records
 const SESSION_CACHE_FILES = ["structure", "structure.json", "source.pdf", "original.pdf", "mediabox.json", "output", "working"];
+// Ask about an unfinished batch once the main window has settled
+const QUEUE_RESUME_DELAY_MS = 5 * 1000;
 // Recognizes our own output files so they are never offered for translation
 const OUTPUT_FILE_RE = new RegExp(`\\.(${OUTPUT_LANGS.join("|")})(\\.dual)?\\.pdf$`, "i");
 
@@ -37,6 +39,12 @@ PaperTranslator = {
   setupPromise: null,
   // False once shut down, so a pending session cleanup does nothing
   active: false,
+  queue: null,
+  queueWindow: null,
+  columnKey: null,
+  // "<libraryID>/<attachment key>" -> summary.json of its newest session
+  statusCache: new Map(),
+  columnRefreshPending: false,
   textTranslations: new Map(),
   readerHandler: null,
   readerContextHandler: null,
@@ -102,6 +110,19 @@ PaperTranslator = {
       this.addToWindow(win);
     }
     this.active = true;
+    await this.loadStatusCache();
+    this.columnKey = await Zotero.ItemTreeManager.registerColumn({
+      dataKey: "translation",
+      label: this.t("pt-column-label"),
+      pluginID: this.id,
+      dataProvider: (item) => this.statusText(item),
+      zoteroPersist: ["width", "hidden", "sortDirection"],
+    });
+    this.queue = new PaperTranslatorQueue(this);
+    await this.queue.load();
+    Zotero.Promise.delay(QUEUE_RESUME_DELAY_MS)
+      .then(() => this.active && this.queue.offerResume())
+      .catch((e) => Zotero.logError(e));
     Zotero.Promise.delay(SESSION_CLEANUP_DELAY_MS)
       .then(() => this.active && this.cleanSessions())
       .catch((e) => Zotero.logError(e));
@@ -109,6 +130,13 @@ PaperTranslator = {
 
   shutdown() {
     this.active = false;
+    this.queue?.shutdown();
+    if (this.queueWindow && !this.queueWindow.closed) {
+      this.queueWindow.close();
+    }
+    if (this.columnKey) {
+      Zotero.ItemTreeManager.unregisterColumn(this.columnKey);
+    }
     for (let translation of this.textTranslations.values()) translation.close();
     this.textTranslations.clear();
     if (this.readerHandler) Zotero.Reader.unregisterEventListener("renderToolbar", this.readerHandler);
@@ -156,9 +184,124 @@ PaperTranslator = {
             });
           }
         },
+      }, {
+        menuType: "menuitem",
+        l10nID: "paper-translator-menu-queue-add",
+        onShowing: (event, context) => {
+          context.setVisible(this.getPDFAttachments(context.items).length > 0);
+        },
+        onCommand: (event, context) => {
+          this.queue.add(this.getPDFAttachments(context.items), "main");
+          this.openQueueWindow();
+          this.queue.start();
+        },
       }],
     });
-    this.menuIDs = [menuID].filter(Boolean);
+    let toolsMenuID = Zotero.MenuManager.registerMenu({
+      menuID: "paper-translator-tools",
+      pluginID: this.id,
+      target: "main/menubar/tools",
+      menus: [{
+        menuType: "menuitem",
+        l10nID: "paper-translator-menu-queue",
+        icon: this.rootURI + "content/icon.svg",
+        onCommand: () => this.openQueueWindow(),
+      }],
+    });
+    this.menuIDs = [menuID, toolsMenuID].filter(Boolean);
+  },
+
+  openQueueWindow() {
+    if (this.queueWindow && !this.queueWindow.closed) {
+      this.queueWindow.focus();
+      return;
+    }
+    this.queueWindow = Zotero.getMainWindow().openDialog(
+      "chrome://paper-translator/content/queue.xhtml", "paper-translator-queue",
+      "chrome,resizable,centerscreen,dialog=no,width=820,height=620"
+    );
+  },
+
+  // Library status column
+
+  /** Read each session's summary.json; only the newest per paper and language counts. */
+  async loadStatusCache() {
+    this.statusCache.clear();
+    let root = PathUtils.join(this.dataDir, "sessions");
+    if (!(await IOUtils.exists(root))) {
+      return;
+    }
+    for (let folder of await IOUtils.getChildren(root)) {
+      let [libraryID, key] = PathUtils.filename(folder).split("-");
+      try {
+        let summary = JSON.parse(await IOUtils.readUTF8(PathUtils.join(folder, "summary.json")));
+        this.rememberStatus(`${libraryID}/${key}`, summary);
+      }
+      catch {
+        // Sessions from before summary.json get one when next saved
+      }
+    }
+  },
+
+  rememberStatus(key, summary) {
+    let lang = this.getSettings().langOut;
+    let known = this.statusCache.get(key);
+    if (summary.lang === lang && (!known || known.updated_at <= summary.updated_at)) {
+      this.statusCache.set(key, summary);
+    }
+  },
+
+  /** Called by a translation whenever its session changes. */
+  noteSession(translation) {
+    let paragraphs = translation.session?.paragraphs || [];
+    let suggested = paragraphs.filter((p) => p.suggested);
+    this.rememberStatus(`${translation.attachment.libraryID}/${translation.attachment.key}`, {
+      lang: translation.lang,
+      updated_at: Date.now() / 1000,
+      translated: paragraphs.filter((p) => p.translation).length,
+      suggested: suggested.length,
+      suggested_translated: suggested.filter((p) => p.translation).length,
+    });
+    this.refreshStatusColumn();
+  },
+
+  refreshStatusColumn() {
+    if (this.columnRefreshPending || !this.columnKey) {
+      return;
+    }
+    this.columnRefreshPending = true;
+    Zotero.Promise.delay(1000).then(() => {
+      this.columnRefreshPending = false;
+      if (this.active) {
+        Zotero.ItemTreeManager.refreshColumns();
+      }
+    });
+  },
+
+  /** Short status for a paper or its PDF: queue state first, then saved progress. */
+  statusText(item) {
+    let attachment = item.isRegularItem() ? this.getPDFAttachments([item])[0]
+      : item.isPDFAttachment?.() && !this.isTranslationOutput(item) ? item : null;
+    if (!attachment) {
+      return "";
+    }
+    let entry = this.queue?.entryFor(attachment);
+    if (entry && ["queued", "parsing", "translating", "failed"].includes(entry.state)) {
+      return this.t(`pt-column-${entry.state}`, {
+        percent: entry.total ? Math.round(100 * entry.done / entry.total) : entry.percent || 0,
+      });
+    }
+    let summary = this.statusCache.get(PaperTranslatorQueue.keyOf(attachment));
+    if (!summary?.translated) {
+      return "";
+    }
+    let lang = this.t(`pt-lang-${summary.lang}`);
+    if (!summary.suggested || summary.suggested_translated >= summary.suggested) {
+      return this.t("pt-column-translated", { lang });
+    }
+    return this.t("pt-column-partial", {
+      lang, percent: Math.round(100 * summary.suggested_translated / summary.suggested),
+    });
   },
 
   // Preferences
@@ -486,18 +629,24 @@ PaperTranslator = {
     }
   },
 
-  async openTextTranslation(attachment, options = {}) {
-    if (!attachment?.isPDFAttachment?.()) return;
-    let readerItem = attachment;
-    let link = this.readerRegistry[`${attachment.libraryID}/${attachment.key}`];
-    attachment = this.sourceFor(attachment);
-    let lang = link?.lang || this.getSettings().langOut;
+  /** The one translation object per source PDF and language, shared by tabs and the queue. */
+  textTranslationFor(attachment, lang) {
+    lang ||= this.getSettings().langOut;
     let key = `${attachment.libraryID}-${attachment.key}-${lang}`;
     let translation = this.textTranslations.get(key);
     if (!translation || translation.closed) {
       translation = new PaperTranslatorTextTranslation(this, attachment, () => this.textTranslations.delete(key), lang);
       this.textTranslations.set(key, translation);
     }
+    return translation;
+  },
+
+  async openTextTranslation(attachment, options = {}) {
+    if (!attachment?.isPDFAttachment?.()) return;
+    let readerItem = attachment;
+    let link = this.readerRegistry[`${attachment.libraryID}/${attachment.key}`];
+    attachment = this.sourceFor(attachment);
+    let translation = this.textTranslationFor(attachment, link?.lang);
     translation.openMenuRequested ||= !!options.showMenu;
     if (options.reader && link) {
       translation.readerItem = readerItem;

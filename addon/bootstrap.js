@@ -1,6 +1,7 @@
 var PaperTranslator;
 var PaperTranslatorTextTranslation;
 var PaperTranslatorNativeReader;
+var PaperTranslatorQueue;
 var chromeHandle;
 
 function install() {}
@@ -12,6 +13,7 @@ async function startup({ id, version, rootURI }) {
   ]);
   Services.scriptloader.loadSubScript(rootURI + "content/native-reader.js");
   Services.scriptloader.loadSubScript(rootURI + "content/text-translation-controller.js");
+  Services.scriptloader.loadSubScript(rootURI + "content/batch-queue.js");
   Services.scriptloader.loadSubScript(rootURI + "content/paper-translator.js");
   PaperTranslator.init({ id, version, rootURI });
   await PaperTranslator.startup();

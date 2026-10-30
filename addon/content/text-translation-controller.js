@@ -152,6 +152,7 @@ var PaperTranslatorTextTranslation = class {
       if (Number.isFinite(message.overall)) this.progress.percent = Math.max(this.progress.percent || 0, message.overall);
     }
     else if (message.type === "retry") this.setStatus("pt-status-retrying", { attempt: message.attempt, maximum: 2 });
+    if (["session", "paragraph"].includes(message.type) && this.session) this.plugin.noteSession(this);
     this.send(message.type, message);
   }
 

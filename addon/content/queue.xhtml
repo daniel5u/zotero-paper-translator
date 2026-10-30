@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8"/>
+  <title>Paper Translator</title>
+  <link rel="stylesheet" href="chrome://paper-translator/content/queue.css"/>
+  <script src="chrome://zotero/content/include.js"></script>
+  <script src="chrome://paper-translator/content/queue.js"></script>
+</head>
+<body>
+  <header class="bar">
+    <h1 id="heading"></h1>
+    <span class="spacer"></span>
+    <button id="toggle"></button>
+    <button id="add" class="primary"></button>
+    <button id="clear"></button>
+  </header>
+  <p id="notice" class="notice" hidden="hidden"></p>
+
+  <section id="queue-view">
+    <div id="stats" class="stats"></div>
+    <div id="entries" class="list"></div>
+    <p id="empty" class="empty" hidden="hidden"></p>
+  </section>
+
+  <section id="picker-view" hidden="hidden">
+    <div class="bar">
+      <input id="search" type="search"/>
+      <select id="collection"></select>
+      <select id="sort"></select>
+    </div>
+    <label class="select-all"><input id="select-all" type="checkbox"/> <span id="select-all-label"></span></label>
+    <div id="items" class="list"></div>
+    <p id="items-note" class="note"></p>
+    <footer class="bar">
+      <label id="scope-label" for="scope"></label>
+      <select id="scope"></select>
+      <span class="spacer"></span>
+      <button id="back"></button>
+      <button id="confirm" class="primary"></button>
+    </footer>
+  </section>
+</body>
+</html>

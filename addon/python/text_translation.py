@@ -52,6 +52,16 @@ def load_state(folder):
 def save_state(folder, state):
     state["updated_at"] = time.time()
     atomic_json(Path(folder) / "session.json", state)
+    # A few numbers for the library's status column, so Zotero need not read
+    # every session's full paragraph list at startup.
+    paragraphs = state.get("paragraphs", [])
+    suggested = [p for p in paragraphs if p.get("suggested")]
+    atomic_json(Path(folder) / "summary.json", {
+        "lang": state.get("lang_out"), "updated_at": state["updated_at"],
+        "translated": sum(1 for p in paragraphs if p.get("translation")),
+        "suggested": len(suggested),
+        "suggested_translated": sum(1 for p in suggested if p.get("translation")),
+    })
 
 
 def fingerprint(path):

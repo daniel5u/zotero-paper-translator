@@ -111,3 +111,62 @@ pt-error-no-paragraph = No translatable paragraph was found here.
 
 pt-attachment-mono = Translation ({ $lang })
 pt-attachment-dual = Bilingual ({ $lang })
+
+paper-translator-menu-queue =
+    .label = Paper Translator…
+paper-translator-menu-queue-add =
+    .label = Add to Translation Queue
+
+pt-queue-title = Paper Translator
+pt-queue-add = Add papers…
+pt-queue-clear = Clear finished
+pt-queue-start = Start
+pt-queue-pause = Pause
+pt-queue-empty = Your queue is empty. Add papers to translate them in the background.
+pt-queue-stat-papers = Papers
+pt-queue-stat-papers-value = { $done } / { $total } done
+pt-queue-stat-paragraphs = Paragraphs
+pt-queue-stat-tokens = Tokens used
+pt-queue-stat-time = Time left
+pt-queue-stat-minutes = ≈ { $minutes } min
+pt-queue-state-queued = Waiting · { $scope }
+pt-queue-state-parsing = Parsing… { $percent }%
+pt-queue-state-translating = Translating { $done } / { $total }
+pt-queue-state-done = Done · { $total } paragraphs
+pt-queue-state-done-failed = Done · { $failed } of { $total } failed
+pt-queue-state-failed = Failed
+pt-queue-state-skipped = Skipped
+pt-queue-skip = Skip
+pt-queue-open = Open
+pt-queue-retry = Retry
+pt-queue-remove = Remove
+pt-queue-error-missing = The PDF attachment no longer exists.
+pt-queue-error-all-failed = The queue was paused because every paragraph of a paper failed. Check the API settings, then start again. { $detail }
+pt-queue-resume-prompt = { $count ->
+    [one] One paper is left in the translation queue. Continue translating it now?
+   *[other] { $count } papers are left in the translation queue. Continue translating them now?
+}
+
+pt-picker-search = Search title, author, year or tag
+pt-picker-scope = Translate
+pt-picker-sort-added = Newest added
+pt-picker-sort-modified = Recently modified
+pt-picker-sort-title = Title
+pt-picker-sort-creator = Author
+pt-picker-sort-year = Year
+pt-picker-back = Back to queue
+pt-picker-loading = Loading your library…
+pt-picker-all-libraries = All libraries
+pt-picker-not-translated = Not translated
+pt-picker-more = Showing { $shown } of { $total }. Search to narrow the list.
+pt-picker-none = No papers with a PDF match.
+pt-picker-select-all = Select all ({ $count })
+pt-picker-add = Add { $count } to queue
+
+pt-column-label = Translation
+pt-column-queued = Queued
+pt-column-parsing = Parsing…
+pt-column-translating = Translating { $percent }%
+pt-column-failed = Failed
+pt-column-translated = ✓ { $lang }
+pt-column-partial = { $lang } { $percent }%
