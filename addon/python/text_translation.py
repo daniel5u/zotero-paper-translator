@@ -324,7 +324,9 @@ def apply_results(docs, state, config, *, blank_pending):
                 if inp:
                     text = validate_translation(record["translation"], record["input"])
                     engine.post_translate_paragraph(paragraph, tracker, inp, text)
-            elif blank_pending:
+            # Only blank text still awaiting translation. Numbers, short labels
+            # and vertical text are never translatable and keep the source.
+            elif blank_pending and record and record["translatable"]:
                 paragraph.unicode = ""
                 paragraph.pdf_paragraph_composition = []
     return docs
