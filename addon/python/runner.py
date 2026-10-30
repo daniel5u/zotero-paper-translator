@@ -2,7 +2,8 @@
 
 Usage:
     python runner.py check      print versions and exit
-    python runner.py warmup     download BabelDOC models, fonts and cmaps
+    python runner.py verify     import everything a translation needs
+    python runner.py warmup     download BabelDOC models, fonts and cmaps if missing
     python runner.py ping       read a JSON job from stdin and test the API settings
     python runner.py session-* read a JSON job from stdin and run a text translation task
 
@@ -42,11 +43,22 @@ def check():
     emit("check", python=sys.version.split()[0], babeldoc=babeldoc.__version__)
 
 
+def verify():
+    """Import what a translation needs, so a broken install shows up here."""
+    import babeldoc.docvision.doclayout
+    import babeldoc.format.pdf.high_level
+    import filelock
+    import onnxruntime
+    import openai
+    import pymupdf
+    import text_translation
+
+    emit("done")
+
+
 def warmup():
     import babeldoc.assets.assets
-    import babeldoc.format.pdf.high_level
 
-    babeldoc.format.pdf.high_level.init()
     babeldoc.assets.assets.warmup()
     emit("done")
 
@@ -87,6 +99,8 @@ def main():
     try:
         if command == "check":
             check()
+        elif command == "verify":
+            verify()
         elif command == "warmup":
             warmup()
         elif command == "ping":

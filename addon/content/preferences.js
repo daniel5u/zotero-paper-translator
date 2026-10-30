@@ -16,7 +16,7 @@ var PT_TOKEN_FIELDS = {
   max_completion_tokens: "OpenAI reasoning models",
 };
 // Order and names match the steps reported by PaperTranslator._setUpEnvironment()
-var PT_SETUP_STEPS = ["find-uv", "download-uv", "venv", "packages", "warmup"];
+var PT_SETUP_STEPS = ["find-uv", "download-uv", "venv", "packages", "verify", "warmup"];
 var PT_STEP_MARKS = { pending: "○", running: "…", done: "✓", skipped: "–", failed: "✕" };
 
 var PaperTranslatorPrefs = {

@@ -501,7 +501,8 @@ PaperTranslator = {
    * @param {Function} [onStatus] - Called with a status line and, for the
    *   settings page, { step, state, detail, fraction }
    * @param {Object} [options]
-   * @param {boolean} [options.repair] - Reinstall even if the venv looks fine
+   * @param {boolean} [options.repair] - Check the venv even if it looks fine.
+   *   Packages are only reinstalled when they fail the check.
    */
   ensureEnvironment(onStatus = () => {}, { repair = false } = {}) {
     if (!this.setupPromise) {
@@ -535,13 +536,10 @@ PaperTranslator = {
     this.setPref("uvPath", uv);
 
     let packageCount = ((await IOUtils.readUTF8(this.lockPath)).match(/^[A-Za-z0-9_.-]+==/gm) || []).length;
-    let steps = [
-      ["venv", uv, ["venv", "--python", PYTHON_VERSION, "--allow-existing", this.venvDir]],
-      ["packages", uv, ["pip", "sync", "--python", this.venvPython, this.lockPath, ...(repair ? ["--reinstall"] : [])]],
-      ["warmup", this.venvPython, [this.runnerPath, "warmup"]],
-    ];
-    for (let [step, command, args] of steps) {
-      report(step, "running");
+    let sync = ["pip", "sync", "--python", this.venvPython, this.lockPath];
+    let verify = [this.runnerPath, "verify"];
+    let runStep = async (step, command, args, detail = "") => {
+      report(step, "running", detail);
       let downloaded = 0;
       let { exitCode, result, log } = await this.run(command, args, {
         onLine: (line) => {
@@ -556,13 +554,31 @@ PaperTranslator = {
           }
         },
       });
-      if (exitCode !== 0 || result?.type === "error") {
+      let failed = exitCode !== 0 || result?.type === "error";
+      if (!failed) {
+        report(step, "done");
+      }
+      return { failed, log };
+    };
+    let mustSucceed = async (step, outcome) => {
+      if (outcome.failed) {
         report(step, "failed");
-        let logPath = await this.saveLog("setup", log);
+        let logPath = await this.saveLog("setup", outcome.log);
         throw new UserError(this.t("pt-error-setup-failed", { log: logPath }));
       }
-      report(step, "done");
+    };
+
+    await mustSucceed("venv", await runStep("venv", uv, ["venv", "--python", PYTHON_VERSION, "--allow-existing", this.venvDir]));
+    await mustSucceed("packages", await runStep("packages", uv, sync));
+    // Sync only compares package versions, so damaged files need this check.
+    // Reinstalling makes the next import slow, so it waits for a failed check.
+    let verified = await runStep("verify", this.venvPython, verify);
+    if (verified.failed) {
+      report("verify", "pending");
+      await mustSucceed("packages", await runStep("packages", uv, [...sync, "--reinstall"], this.t("pt-setup-reinstalling")));
+      await mustSucceed("verify", await runStep("verify", this.venvPython, verify));
     }
+    await mustSucceed("warmup", await runStep("warmup", this.venvPython, [this.runnerPath, "warmup"]));
     await IOUtils.copy(this.lockPath, this.installedLockPath);
   },
 
