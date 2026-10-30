@@ -58,13 +58,20 @@ class ApiCheckError(Exception):
 
 
 def ping(job):
-    """Validate the API settings with a short request."""
+    """Validate the API settings with a short request.
+
+    Also finds which automatic request fields this API accepts, and returns
+    them for the plugin to remember.
+    """
     import openai
 
     try:
-        from translation import request_translation
+        from translation import RequestOptions, request_translation
+        options = RequestOptions(job)
         with openai.OpenAI(base_url=job["base_url"], api_key=job["api_key"], timeout=60, max_retries=0) as client:
-            request_translation(client, job, [{"role": "user", "content": "Translate to Chinese: Hello"}])
+            request_translation(client, job, [{"role": "user", "content": "Translate to Chinese: Hello"}],
+                                options=options, probe=True)
+        return options.result()
     except openai.AuthenticationError as e:
         raise ApiCheckError("auth", str(e)) from e
     except openai.NotFoundError as e:
@@ -83,8 +90,7 @@ def main():
         elif command == "warmup":
             warmup()
         elif command == "ping":
-            ping(json.loads(sys.stdin.read()))
-            emit("done")
+            emit("done", detected=ping(json.loads(sys.stdin.read())))
         elif command.startswith("session-"):
             from text_translation import run
             run(command, json.loads(sys.stdin.read()), emit)

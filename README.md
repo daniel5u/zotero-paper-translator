@@ -6,10 +6,12 @@
 
 ## 安装
 
-1. 安装 [uv](https://github.com/astral-sh/uv)（插件用它管理 Python 环境，会自动下载 Python 3.12）。
-2. 从 [Releases](https://github.com/daniel5u/zotero-paper-translator/releases/latest) 下载 `paper-translator-<版本>.xpi`。
-3. Zotero → 工具 → 插件 → 齿轮菜单 → 从文件安装插件，选择这个 xpi。之后 Zotero 可通过更新清单自动检查并安装新版。
-4. Zotero → 设置 → Paper Translator：填好 API 地址、API Key、模型，然后点「初始化 / 修复环境」（翻译引擎是 [BabelDOC](https://github.com/funstory-ai/BabelDOC)，首次需要下载约 1 GB。不点也行，第一次翻译时会自动初始化），随后点「测试连接」测试是否可用。
+1. 从 [Releases](https://github.com/daniel5u/zotero-paper-translator/releases/latest) 下载 `paper-translator-<版本>.xpi`。
+2. Zotero → 工具 → 插件 → 齿轮菜单 → 从文件安装插件，选择这个 xpi。之后 Zotero 可通过更新清单自动检查并安装新版。
+3. Zotero → 设置 → Paper Translator：
+   - 「环境」中点「初始化环境」。插件用 [uv](https://github.com/astral-sh/uv) 管理 Python 环境：先查找已安装的 uv，找不到时自动下载（校验 SHA-256），再创建 Python 3.12 环境并安装翻译引擎 [BabelDOC](https://github.com/funstory-ai/BabelDOC)。首次约需下载 1 GB，每一步的进度都会显示。不点也行，第一次翻译时会自动初始化。
+   - 填好 API 地址、API Key 和模型。点模型旁的「检测」可以列出接口提供的模型（`GET /models`），也可以直接输入模型名。
+   - 点「测试连接」。测试会顺带检测这个接口如何关闭模型的思考、用哪个字段限制输出长度。
 
 ## 使用
 
@@ -21,13 +23,17 @@
 
 ## 设置说明
 
+常用设置只有 API 地址、API Key、模型和目标语言。其余选项收在「高级」里，默认全部自动：
+
 | 设置 | 说明 |
 | --- | --- |
-| 思考强度 | 默认「最低」。思考可能占用输出额度；模型不认这个参数时选「不发送」 |
-| 输出 token 上限 | 默认 8192。空响应、截断等重试会增加额度，最高 32768，应按接口能力配置 |
-| 思考模式 | 默认由模型决定。支持 `thinking` 参数的接口可以显式关闭思考。不支持该参数的接口应保持默认 |
 | 并发请求数 | 同时发出的翻译请求数，受你的 API 限速约束 |
-| 系统提示词 | 替换翻译角色说明，段落输出和公式等格式规则保留。 |
+| 系统提示词 | 替换翻译角色说明，段落输出和公式等格式规则保留 |
+| 关闭思考的方式 | 自动时由「测试连接」检测：在 `thinking`（DeepSeek、GLM）、`reasoning_effort`（OpenAI）、`reasoning`（OpenRouter）、`enable_thinking`（Qwen）中，先试最符合 API 地址的一个，再依次尝试其余的，都不被接受时不发送。检测结果按 API 地址和模型分别记住；翻译中接口拒绝了自动选择的字段，也会自动换用下一个 |
+| 输出上限字段 | 自动时使用 `max_tokens`，接口要求时换成 `max_completion_tokens`（OpenAI 推理模型） |
+| 输出 token 上限 | 自动时从 8192 开始，回答被截断时翻倍，最高 32768；也可以固定一个值 |
+
+手动选择的选项不会被自动检测改动；接口拒绝时会直接报错。「恢复自动」会清除手动选择并重新检测。
 
 ## 工作原理
 

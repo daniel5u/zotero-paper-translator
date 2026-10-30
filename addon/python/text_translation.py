@@ -23,7 +23,7 @@ import typing
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from translation import paragraph_messages, request_translation, validate_translation
+from translation import RequestOptions, paragraph_messages, request_translation, validate_translation
 
 SCHEMA = 1
 
@@ -626,6 +626,8 @@ def translate_selection(job, emit):
         record.update(status="queued", error="")
     save_state(folder, state)
     lock = threading.Lock()
+    # Shared, so a field one worker finds rejected is fixed for all of them
+    options = RequestOptions(job, on_adjust=lambda **fields: emit("request_options", **fields))
     workers = max(1, min(int(job.get("qps") or 4), 16))
     limiter = threading.Lock()
     next_start = [0.0]
@@ -648,7 +650,7 @@ def translate_selection(job, emit):
             with openai.OpenAI(base_url=job["base_url"], api_key=job["api_key"], timeout=90, max_retries=0) as client:
                 messages = paragraph_messages(record, state["paragraphs"], job, job.get("instruction", ""))
                 translated, usage = request_translation(
-                    client, job, messages, source=record["input"], cancelled=cancelled,
+                    client, job, messages, options=options, source=record["input"], cancelled=cancelled,
                     on_retry=lambda attempt, error: emit("retry", id=record["id"], attempt=attempt, message=error),
                 )
             with lock:

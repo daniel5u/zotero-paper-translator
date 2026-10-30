@@ -4,13 +4,42 @@
     .paper-translator-pane .pt-section { margin-bottom: 1.5em; }
     .paper-translator-pane .pt-row { display: grid; grid-template-columns: 11em 1fr; gap: 0.5em; align-items: center; margin: 0.4em 0; }
     .paper-translator-pane input[type="text"], .paper-translator-pane input[type="password"],
-    .paper-translator-pane input[type="number"], .paper-translator-pane select,
-    .paper-translator-pane textarea { width: 100%; box-sizing: border-box; }
+    .paper-translator-pane select, .paper-translator-pane textarea { width: 100%; box-sizing: border-box; }
     .paper-translator-pane textarea { min-height: 6em; resize: vertical; }
-    .paper-translator-pane .pt-actions { display: flex; gap: 0.5em; align-items: center; margin-top: 0.6em; }
+    .paper-translator-pane .pt-actions { display: flex; gap: 0.5em; align-items: center; margin: 0.6em 0 0 11.5em; }
+    .paper-translator-pane .pt-actions.pt-flush { margin-left: 0; }
+    .paper-translator-pane .pt-inline { display: flex; gap: 0.5em; align-items: center; }
+    .paper-translator-pane .pt-inline input[type="text"] { flex: 1; min-width: 0; }
     .paper-translator-pane .pt-status { color: var(--fill-secondary); white-space: pre-wrap; }
     .paper-translator-pane .pt-status.error { color: var(--accent-red); }
+    .paper-translator-pane .pt-status.ok { color: var(--accent-green); }
+    .paper-translator-pane .pt-steps { list-style: none; padding: 0; margin: 0.6em 0; }
+    .paper-translator-pane .pt-steps li { display: grid; grid-template-columns: 1.5em auto 1fr; gap: 0.4em; align-items: baseline; margin: 0.25em 0; }
+    .paper-translator-pane .pt-steps li.pending, .paper-translator-pane .pt-steps li.skipped { color: var(--fill-secondary); }
+    .paper-translator-pane .pt-steps li.running { font-weight: 600; }
+    .paper-translator-pane .pt-steps li.failed { color: var(--accent-red); }
+    .paper-translator-pane .pt-steps .pt-detail { color: var(--fill-secondary); font-weight: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .paper-translator-pane .pt-steps progress { grid-column: 2 / -1; width: 100%; height: 0.4em; }
+    .paper-translator-pane #pt-models { margin-top: 0.3em; }
+    .paper-translator-pane details { border-top: 1px solid var(--fill-quinary); padding-top: 0.8em; }
+    .paper-translator-pane summary { font-weight: 600; cursor: default; }
+    .paper-translator-pane h3 { margin: 1.2em 0 0.4em; font-size: 1em; }
+    .paper-translator-pane #pt-max-tokens { width: 7em; }
   </html:style>
+
+  <html:div class="pt-section">
+    <html:h2 data-l10n-id="pt-pref-env-heading"/>
+    <html:div id="pt-env-status" class="pt-status"/>
+    <html:ol id="pt-env-steps" class="pt-steps" hidden="hidden"/>
+    <html:div class="pt-row">
+      <html:label for="pt-uv-path" data-l10n-id="pt-pref-uv-path"/>
+      <html:input id="pt-uv-path" type="text" data-l10n-id="pt-pref-uv-path-input" preference="extensions.paper-translator.uvPath"/>
+    </html:div>
+    <html:div class="pt-actions">
+      <html:button id="pt-env-setup"/>
+      <html:button id="pt-env-open" data-l10n-id="pt-pref-env-open"/>
+    </html:div>
+  </html:div>
 
   <html:div class="pt-section">
     <html:h2 data-l10n-id="pt-pref-api-heading"/>
@@ -24,33 +53,21 @@
     </html:div>
     <html:div class="pt-row">
       <html:label for="pt-model" data-l10n-id="pt-pref-model"/>
-      <html:input id="pt-model" type="text" preference="extensions.paper-translator.model"/>
+      <html:div class="pt-inline">
+        <html:input id="pt-model" type="text" preference="extensions.paper-translator.model"/>
+        <html:button id="pt-detect-models" data-l10n-id="pt-pref-detect-models"/>
+      </html:div>
     </html:div>
     <html:div class="pt-row">
-      <html:label for="pt-reasoning" data-l10n-id="pt-pref-reasoning"/>
-      <html:select id="pt-reasoning" preference="extensions.paper-translator.reasoning">
-        <html:option value="" data-l10n-id="pt-pref-reasoning-none"/>
-        <html:option value="minimal" data-l10n-id="pt-pref-reasoning-minimal"/>
-        <html:option value="low" data-l10n-id="pt-pref-reasoning-low"/>
-        <html:option value="medium" data-l10n-id="pt-pref-reasoning-medium"/>
-        <html:option value="high" data-l10n-id="pt-pref-reasoning-high"/>
-      </html:select>
+      <html:span/>
+      <html:div>
+        <html:select id="pt-models" size="6" hidden="hidden"/>
+        <html:span id="pt-models-status" class="pt-status"/>
+      </html:div>
     </html:div>
     <html:div class="pt-actions">
       <html:button id="pt-test" data-l10n-id="pt-pref-test"/>
       <html:span id="pt-test-status" class="pt-status"/>
-    </html:div>
-    <html:div class="pt-row">
-      <html:label for="pt-max-tokens" data-l10n-id="pt-pref-max-tokens"/>
-      <html:input id="pt-max-tokens" type="number" min="2048" max="32768" step="1024" preference="extensions.paper-translator.maxTokens"/>
-    </html:div>
-    <html:div class="pt-row">
-      <html:label for="pt-thinking" data-l10n-id="pt-pref-thinking"/>
-      <html:select id="pt-thinking" preference="extensions.paper-translator.thinking">
-        <html:option value="" data-l10n-id="pt-pref-thinking-default"/>
-        <html:option value="disabled" data-l10n-id="pt-pref-thinking-disabled"/>
-        <html:option value="enabled" data-l10n-id="pt-pref-thinking-enabled"/>
-      </html:select>
     </html:div>
   </html:div>
 
@@ -67,14 +84,6 @@
       </html:select>
     </html:div>
     <html:div class="pt-row">
-      <html:label for="pt-qps" data-l10n-id="pt-pref-qps"/>
-      <html:input id="pt-qps" type="number" min="1" max="64" preference="extensions.paper-translator.qps"/>
-    </html:div>
-    <html:div class="pt-row">
-      <html:label for="pt-prompt" data-l10n-id="pt-pref-prompt"/>
-      <html:textarea id="pt-prompt" preference="extensions.paper-translator.customPrompt"/>
-    </html:div>
-    <html:div class="pt-row">
       <html:span/>
       <html:label>
         <html:input id="pt-open" type="checkbox" preference="extensions.paper-translator.openWhenDone"/>
@@ -83,16 +92,40 @@
     </html:div>
   </html:div>
 
-  <html:div class="pt-section">
-    <html:h2 data-l10n-id="pt-pref-env-heading"/>
+  <html:details class="pt-section">
+    <html:summary data-l10n-id="pt-pref-advanced"/>
     <html:div class="pt-row">
-      <html:label for="pt-uv-path" data-l10n-id="pt-pref-uv-path"/>
-      <html:input id="pt-uv-path" type="text" preference="extensions.paper-translator.uvPath"/>
+      <html:label for="pt-qps" data-l10n-id="pt-pref-qps"/>
+      <html:input id="pt-qps" type="number" min="1" max="64" preference="extensions.paper-translator.qps"/>
     </html:div>
-    <html:div id="pt-env-status" class="pt-status"/>
+    <html:div class="pt-row">
+      <html:label for="pt-prompt" data-l10n-id="pt-pref-prompt"/>
+      <html:textarea id="pt-prompt" preference="extensions.paper-translator.customPrompt"/>
+    </html:div>
+
+    <html:h3 data-l10n-id="pt-pref-request-heading"/>
+    <html:div class="pt-row">
+      <html:label for="pt-thinking-method" data-l10n-id="pt-pref-thinking-method"/>
+      <html:select id="pt-thinking-method"/>
+    </html:div>
+    <html:div class="pt-row">
+      <html:label for="pt-token-field" data-l10n-id="pt-pref-token-field"/>
+      <html:select id="pt-token-field"/>
+    </html:div>
+    <html:div class="pt-row">
+      <html:label for="pt-max-tokens-mode" data-l10n-id="pt-pref-max-tokens"/>
+      <html:div class="pt-inline">
+        <html:select id="pt-max-tokens-mode" style="width: auto">
+          <html:option value="auto" data-l10n-id="pt-pref-automatic"/>
+          <html:option value="fixed" data-l10n-id="pt-pref-fixed"/>
+        </html:select>
+        <html:input id="pt-max-tokens" type="number" min="256" max="131072" step="256"/>
+        <html:span class="pt-status" data-l10n-id="pt-pref-max-tokens-note"/>
+      </html:div>
+    </html:div>
     <html:div class="pt-actions">
-      <html:button id="pt-env-setup" data-l10n-id="pt-pref-env-setup"/>
-      <html:button id="pt-env-open" data-l10n-id="pt-pref-env-open"/>
+      <html:button id="pt-request-reset" data-l10n-id="pt-pref-request-reset"/>
+      <html:span class="pt-status" data-l10n-id="pt-pref-request-note"/>
     </html:div>
-  </html:div>
+  </html:details>
 </vbox>

@@ -6,6 +6,8 @@ const PREF_BRANCH = "extensions.paper-translator.";
 // Must match PROTOCOL_PREFIX in python/runner.py
 const PROTOCOL_PREFIX = "@@PT ";
 const PYTHON_VERSION = "3.12";
+// uv release downloaded when none is installed; its .sha256 files are checked
+const UV_VERSION = "0.13.6";
 const LOG_LINES_KEPT = 300;
 const OUTPUT_LANGS = ["zh", "zh-TW", "ja", "ko", "en"];
 // A paper's parse cache is deleted after this long unused; translations stay
@@ -62,6 +64,7 @@ PaperTranslator = {
     this.l10n = new Localization(["paper-translator.ftl"], true);
     // The preferences pane runs in its own scope and reaches the plugin here
     Zotero.PaperTranslator = this;
+    this.migratePrefs();
     this.nativeCSS = await Zotero.File.getResourceAsync(this.rootURI + "content/native-reader.css");
     try { this.readerRegistry = JSON.parse(await IOUtils.readUTF8(PathUtils.join(this.dataDir, "native-readers.json"))); }
     catch { this.readerRegistry = {}; }
@@ -310,30 +313,96 @@ PaperTranslator = {
     return Zotero.Prefs.get(PREF_BRANCH + name, true);
   },
 
+  setPref(name, value) {
+    Zotero.Prefs.set(PREF_BRANCH + name, value, true);
+  },
+
   getSettings() {
+    let baseURL = (this.getPref("baseURL") || "").trim();
+    let model = (this.getPref("model") || "").trim();
     return {
-      baseURL: (this.getPref("baseURL") || "").trim(),
+      baseURL,
       apiKey: (this.getPref("apiKey") || "").trim(),
-      model: (this.getPref("model") || "").trim(),
+      model,
       langOut: this.getPref("langOut") || "zh",
-      reasoning: this.getPref("reasoning") || "",
       qps: parseInt(this.getPref("qps")) || 4,
       customPrompt: (this.getPref("customPrompt") || "").trim(),
       openWhenDone: !!this.getPref("openWhenDone"),
-      maxTokens: parseInt(this.getPref("maxTokens")) || 8192,
-      thinking: this.getPref("thinking") || "",
+      // "auto", or a field the user chose; see THINKING_OFF in translation.py
+      thinkingMethod: this.getPref("thinkingMethod") || "auto",
+      tokenField: this.getPref("tokenField") || "auto",
+      // 0 means automatic: start at 8192 and double when an answer is cut off
+      maxTokens: parseInt(this.getPref("maxTokens")) || 0,
+      detected: this.detectedOptions(baseURL, model),
     };
   },
 
+  /** What detection found for this API and model, or null if it has not run for them. */
+  detectedOptions(baseURL, model) {
+    try {
+      let detected = JSON.parse(this.getPref("detectedOptions") || "{}");
+      return detected.api === `${baseURL} ${model}` ? detected : null;
+    }
+    catch {
+      return null;
+    }
+  },
+
+  rememberDetected({ thinking_method, token_field }, settings = this.getSettings()) {
+    this.setPref("detectedOptions", JSON.stringify({
+      api: `${settings.baseURL} ${settings.model}`, thinking_method, token_field,
+    }));
+  },
+
   apiJob(settings) {
+    let isAuto = (value) => value === "auto";
+    let detected = settings.detected || {};
     return {
       base_url: settings.baseURL,
       api_key: settings.apiKey,
       model: settings.model,
-      reasoning: settings.reasoning,
+      thinking_method: isAuto(settings.thinkingMethod) ? detected.thinking_method || "auto" : settings.thinkingMethod,
+      token_field: isAuto(settings.tokenField) ? detected.token_field || "auto" : settings.tokenField,
+      // Only these may be changed when the API rejects them
+      auto_fields: [isAuto(settings.thinkingMethod) && "thinking", isAuto(settings.tokenField) && "token_field"]
+        .filter(Boolean),
       max_tokens: settings.maxTokens,
-      thinking: settings.thinking,
     };
+  },
+
+  /**
+   * 0.3.0 had reasoning-effort and thinking-mode settings; keep what a user
+   * chose there as the matching request option.
+   */
+  migratePrefs() {
+    let chosen = (name) => (Zotero.Prefs.prefHasUserValue(PREF_BRANCH + name, true) ? this.getPref(name) : null);
+    let thinking = chosen("thinking");
+    let reasoning = chosen("reasoning");
+    if (thinking === null && reasoning === null) {
+      return;
+    }
+    if (thinking === "disabled") {
+      this.setPref("thinkingMethod", "thinking");
+    }
+    else if (reasoning === "minimal") {
+      this.setPref("thinkingMethod", "reasoning");
+    }
+    else if (thinking === "enabled" || reasoning !== null) {
+      this.setPref("thinkingMethod", "none");
+    }
+    Zotero.Prefs.clear(PREF_BRANCH + "thinking", true);
+    Zotero.Prefs.clear(PREF_BRANCH + "reasoning", true);
+  },
+
+  /** Model IDs an OpenAI-compatible API offers (GET /models). */
+  async fetchModels(baseURL, apiKey) {
+    let xhr = await Zotero.HTTP.request("GET", baseURL.replace(/\/+$/, "") + "/models", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      responseType: "json",
+      timeout: 20000,
+    });
+    let ids = (xhr.response?.data || []).map((model) => model.id).filter(Boolean);
+    return [...new Set(ids)].sort();
   },
 
   t(id, args) {
@@ -429,39 +498,142 @@ PaperTranslator = {
   /**
    * Make sure the venv exists and matches the bundled lock file.
    * Concurrent callers share one setup run.
+   * @param {Function} [onStatus] - Called with a status line and, for the
+   *   settings page, { step, state, detail, fraction }
+   * @param {Object} [options]
+   * @param {boolean} [options.repair] - Reinstall even if the venv looks fine
    */
-  ensureEnvironment(onStatus = () => {}) {
+  ensureEnvironment(onStatus = () => {}, { repair = false } = {}) {
     if (!this.setupPromise) {
-      this.setupPromise = this._setUpEnvironment(onStatus).finally(() => {
+      this.setupPromise = this._setUpEnvironment(onStatus, repair).finally(() => {
         this.setupPromise = null;
       });
     }
     return this.setupPromise;
   },
 
-  async _setUpEnvironment(onStatus) {
+  async _setUpEnvironment(onStatus, repair) {
     await this.installPythonFiles();
-    if (await this.isEnvironmentReady()) {
+    if (!repair && (await this.isEnvironmentReady())) {
       return;
     }
+    let report = (step, state, detail = "", fraction = null) => {
+      onStatus(this.t(`pt-setup-step-${step}`), { step, state, detail, fraction });
+    };
+    report("find-uv", "running");
     let uv = await this.findUV();
-    if (!uv) {
-      throw new UserError(this.t("pt-error-uv-not-found"));
+    report("find-uv", "done", uv || this.t("pt-setup-uv-missing"));
+    if (uv) {
+      report("download-uv", "skipped");
     }
+    else {
+      report("download-uv", "running");
+      uv = await this.downloadUV((fraction, detail) => report("download-uv", "running", detail, fraction));
+      report("download-uv", "done", uv);
+    }
+    // The settings page shows the uv that was actually used
+    this.setPref("uvPath", uv);
+
+    let packageCount = ((await IOUtils.readUTF8(this.lockPath)).match(/^[A-Za-z0-9_.-]+==/gm) || []).length;
     let steps = [
-      ["pt-setup-venv", uv, ["venv", "--python", PYTHON_VERSION, "--allow-existing", this.venvDir]],
-      ["pt-setup-install", uv, ["pip", "sync", "--python", this.venvPython, this.lockPath]],
-      ["pt-setup-warmup", this.venvPython, [this.runnerPath, "warmup"]],
+      ["venv", uv, ["venv", "--python", PYTHON_VERSION, "--allow-existing", this.venvDir]],
+      ["packages", uv, ["pip", "sync", "--python", this.venvPython, this.lockPath, ...(repair ? ["--reinstall"] : [])]],
+      ["warmup", this.venvPython, [this.runnerPath, "warmup"]],
     ];
-    for (let [l10nID, command, args] of steps) {
-      onStatus(this.t(l10nID));
-      let { exitCode, result, log } = await this.run(command, args);
+    for (let [step, command, args] of steps) {
+      report(step, "running");
+      let downloaded = 0;
+      let { exitCode, result, log } = await this.run(command, args, {
+        onLine: (line) => {
+          // uv logs "Downloading <package> (<size>)" and "Downloaded <package>"
+          let match = line.match(/^\s*Download(ing|ed)\s+(\S+)/);
+          if (step === "packages" && match) {
+            downloaded += match[1] === "ed" ? 1 : 0;
+            report(step, "running", match[2], packageCount ? Math.min(1, downloaded / packageCount) : null);
+          }
+          else if (step !== "packages") {
+            report(step, "running", line.trim().slice(0, 100));
+          }
+        },
+      });
       if (exitCode !== 0 || result?.type === "error") {
+        report(step, "failed");
         let logPath = await this.saveLog("setup", log);
         throw new UserError(this.t("pt-error-setup-failed", { log: logPath }));
       }
+      report(step, "done");
     }
     await IOUtils.copy(this.lockPath, this.installedLockPath);
+  },
+
+  /**
+   * Fetch uv's official build for this system into the plugin's folder,
+   * verified against the SHA-256 published with the release.
+   */
+  async downloadUV(onProgress) {
+    let arch = Services.appinfo.XPCOMABI.split("-")[0];
+    if (!["x86_64", "aarch64"].includes(arch)) {
+      throw new UserError(this.t("pt-error-uv-not-found"));
+    }
+    let target = Zotero.isWin ? `${arch}-pc-windows-msvc`
+      : Zotero.isMac ? `${arch}-apple-darwin` : `${arch}-unknown-linux-gnu`;
+    let name = `uv-${target}.${Zotero.isWin ? "zip" : "tar.gz"}`;
+    let url = `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${name}`;
+    let dir = PathUtils.join(this.dataDir, "uv");
+    let archive = PathUtils.join(this.dataDir, name);
+    try {
+      await IOUtils.remove(dir, { recursive: true, ignoreAbsent: true });
+      await IOUtils.makeDirectory(dir, { createAncestors: true });
+      let checksum = await Zotero.HTTP.request("GET", url + ".sha256", { timeout: 30000 });
+      let expected = checksum.responseText.trim().split(/\s+/)[0].toLowerCase();
+      await Zotero.HTTP.download(url, archive, {
+        onProgress: (bytes, total) => onProgress(total ? bytes / total : null, `${(bytes / 1048576).toFixed(1)} MB`),
+      });
+      if ((await this.sha256(archive)) !== expected) {
+        throw new Error(this.t("pt-error-uv-checksum"));
+      }
+      // tar ships with macOS, Linux and Windows 10+, and reads zip files too
+      let tar = await Subprocess.pathSearch(Zotero.isWin ? "tar.exe" : "tar");
+      let { exitCode, log } = await this.run(tar, ["-xf", archive, "-C", dir]);
+      if (exitCode !== 0) {
+        throw new Error(log.join("\n"));
+      }
+      let binary = await this.findFile(dir, Zotero.isWin ? "uv.exe" : "uv");
+      if (!binary) {
+        throw new Error(`${name} has no uv binary`);
+      }
+      return binary;
+    }
+    catch (e) {
+      throw new UserError(this.t("pt-error-uv-download", { detail: String(e.message || e) }));
+    }
+    finally {
+      await IOUtils.remove(archive, { ignoreAbsent: true });
+    }
+  },
+
+  async sha256(path) {
+    let hasher = Cc["@mozilla.org/security/hash;1"].createInstance(Ci.nsICryptoHash);
+    hasher.init(Ci.nsICryptoHash.SHA256);
+    let bytes = await IOUtils.read(path);
+    hasher.update(bytes, bytes.length);
+    return Array.from(hasher.finish(false), (char) => char.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+  },
+
+  async findFile(dir, name) {
+    for (let path of await IOUtils.getChildren(dir)) {
+      let info = await IOUtils.stat(path);
+      if (info.type === "directory") {
+        let found = await this.findFile(path, name);
+        if (found) {
+          return found;
+        }
+      }
+      else if (PathUtils.filename(path) === name) {
+        return path;
+      }
+    }
+    return null;
   },
 
   async checkEnvironment() {
@@ -473,6 +645,7 @@ PaperTranslator = {
     return result?.type === "check" ? result : null;
   },
 
+  /** Send a short request; returns the request options detected for this API. */
   async testConnection(settings) {
     await this.ensureEnvironment();
     let { result, log } = await this.run(this.venvPython, [this.runnerPath, "ping"], {
@@ -481,6 +654,10 @@ PaperTranslator = {
     if (result?.type !== "done") {
       throw new UserError(await this.describeRunnerError(result, log));
     }
+    if (result.detected) {
+      this.rememberDetected(result.detected, settings);
+    }
+    return result.detected;
   },
 
   // Subprocesses
@@ -491,8 +668,9 @@ PaperTranslator = {
    * @param {string} [options.input] - Written to stdin
    * @param {Function} [options.onMessage] - Called with each protocol message
    * @param {Function} [options.onSpawn] - Called with the process handle
+   * @param {Function} [options.onLine] - Called with each log line
    */
-  async run(command, args, { input, onMessage, onSpawn } = {}) {
+  async run(command, args, { input, onMessage, onSpawn, onLine } = {}) {
     let proc = await Subprocess.call({
       command,
       arguments: args,
@@ -512,12 +690,18 @@ PaperTranslator = {
     let handleLine = (line) => {
       if (line.startsWith(PROTOCOL_PREFIX)) {
         let message = JSON.parse(line.slice(PROTOCOL_PREFIX.length));
+        if (message.type === "request_options") {
+          // An automatic request field was rejected mid-translation and replaced
+          this.rememberDetected(message);
+          return;
+        }
         if (message.type !== "progress") {
           result = message;
         }
         onMessage?.(message);
       }
       else if (line.trim()) {
+        onLine?.(line);
         log.push(line);
         if (log.length > LOG_LINES_KEPT) {
           log.shift();
