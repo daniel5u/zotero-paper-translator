@@ -37,6 +37,8 @@
 
 - 环境放在 `<Zotero 数据目录>/paper-translator/venv`，按插件自带的 `addon/python/requirements.lock` 精确安装。插件更新带来新的依赖清单时会自动重新同步。
 - PDF 解析与翻译分离，段落结果逐个保存，全部排版后统一更新阅读器；API 连接测试由设置页单独触发。
+- 阅读器里的双栏 PDF 本身就是已完成页面的存储：只重绘译文有变化的页面，没有新译文时重新打开不会改动这个文件。排版中间文件在每次运行结束后删除。
+- 解析结果（版面结构、原文快照）7 天未使用会自动清理，需要时重新解析；译文保存在 `session.json` 中长期保留，重新解析后按段落自动接回。附件被删除后，对应的会话目录也会被清理。
 
 ## 开发
 
@@ -48,7 +50,7 @@
     content/             主逻辑、设置页
     locale/              中英文文案（Fluent）
     python/runner.py     插件与 BabelDOC 之间的桥
-    python/text_translation.py  持久化结构、段落任务、页面预览和导出
+    python/text_translation.py  持久化结构、段落任务、双栏阅读 PDF 和导出
     python/translation.py 空响应/截断检查、重试与前后文提示词
     python/requirements.lock
   python/requirements.in 依赖清单的来源

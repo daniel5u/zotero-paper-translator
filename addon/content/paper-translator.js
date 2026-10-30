@@ -8,6 +8,12 @@ const PROTOCOL_PREFIX = "@@PT ";
 const PYTHON_VERSION = "3.12";
 const LOG_LINES_KEPT = 300;
 const OUTPUT_LANGS = ["zh", "zh-TW", "ja", "ko", "en"];
+// A paper's parse cache is deleted after this long unused; translations stay
+const SESSION_CACHE_DAYS = 7;
+// Cleanup is not urgent, so it waits until Zotero has settled after startup
+const SESSION_CLEANUP_DELAY_MS = 60 * 1000;
+// Everything in a session folder except the translations and small records
+const SESSION_CACHE_FILES = ["structure", "structure.json", "source.pdf", "original.pdf", "mediabox.json", "output", "working"];
 // Recognizes our own output files so they are never offered for translation
 const OUTPUT_FILE_RE = new RegExp(`\\.(${OUTPUT_LANGS.join("|")})(\\.dual)?\\.pdf$`, "i");
 
@@ -29,6 +35,8 @@ PaperTranslator = {
   menuIDs: [],
   prefPaneID: null,
   setupPromise: null,
+  // False once shut down, so a pending session cleanup does nothing
+  active: false,
   textTranslations: new Map(),
   readerHandler: null,
   readerContextHandler: null,
@@ -93,9 +101,14 @@ PaperTranslator = {
     for (let win of Zotero.getMainWindows()) {
       this.addToWindow(win);
     }
+    this.active = true;
+    Zotero.Promise.delay(SESSION_CLEANUP_DELAY_MS)
+      .then(() => this.active && this.cleanSessions())
+      .catch((e) => Zotero.logError(e));
   },
 
   shutdown() {
+    this.active = false;
     for (let translation of this.textTranslations.values()) translation.close();
     this.textTranslations.clear();
     if (this.readerHandler) Zotero.Reader.unregisterEventListener("renderToolbar", this.readerHandler);
@@ -426,6 +439,51 @@ PaperTranslator = {
       await IOUtils.writeUTF8(path, text, { tmpPath: path + ".tmp" });
     });
     await this.registryWrite;
+  },
+
+  /**
+   * Keep each paper's translations (session.json) for good, but drop the
+   * parse cache of papers unused for a while; it is rebuilt on demand. A
+   * session whose source attachment no longer exists is removed entirely.
+   */
+  async cleanSessions() {
+    let root = PathUtils.join(this.dataDir, "sessions");
+    if (!(await IOUtils.exists(root))) {
+      return;
+    }
+    let open = new Set([...this.textTranslations.values()].map((translation) => translation.folder));
+    for (let folder of await IOUtils.getChildren(root)) {
+      // Folder names start with "<libraryID>-<attachment key>-"
+      let [libraryID, key] = PathUtils.filename(folder).split("-");
+      if (!this.active || open.has(folder) || !/^\d+$/.test(libraryID) || !key) {
+        continue;
+      }
+      try {
+        // An item in the trash may still be restored, so only a purged one counts
+        if (!(await Zotero.Items.getByLibraryAndKeyAsync(Number(libraryID), key))) {
+          await IOUtils.remove(folder, { recursive: true, ignoreAbsent: true });
+          continue;
+        }
+        let lastUsed = 0;
+        for (let name of ["session.json", "view.json"]) {
+          let info = await IOUtils.stat(PathUtils.join(folder, name)).catch(() => null);
+          lastUsed = Math.max(lastUsed, info?.lastModified || 0);
+        }
+        if (Date.now() - lastUsed < SESSION_CACHE_DAYS * 24 * 60 * 60 * 1000) {
+          continue;
+        }
+        let names = SESSION_CACHE_FILES.concat(
+          (await IOUtils.getChildren(folder)).map((path) => PathUtils.filename(path))
+            .filter((name) => /^(reader|translation)-.*\.pdf$/.test(name))
+        );
+        for (let name of names) {
+          await IOUtils.remove(PathUtils.join(folder, name), { recursive: true, ignoreAbsent: true });
+        }
+      }
+      catch (e) {
+        Zotero.logError(e);
+      }
+    }
   },
 
   async openTextTranslation(attachment, options = {}) {

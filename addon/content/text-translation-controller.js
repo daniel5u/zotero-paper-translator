@@ -118,12 +118,10 @@ var PaperTranslatorTextTranslation = class {
         this.progress.percent = 90 * this.progress.completed / this.progress.total;
       }
     }
-    else if (message.type === "page_preview") {
-      this.renderErrors.delete(message.page);
-      if (this.session) this.session.previews[String(message.page)] = message.preview;
-    }
     else if (message.type === "preview_error") this.renderErrors.set(message.page, message.message);
     else if (message.type === "reader_document") {
+      // A new file means every out-of-date page was drawn successfully.
+      if (message.path) this.renderErrors.clear();
       this.progress.percent = 98;
       this.geometry = message.geometry;
       this.nextDocument = message;
@@ -158,7 +156,9 @@ var PaperTranslatorTextTranslation = class {
   }
 
   async operation(command, fields = {}) {
-    if (this.busy) throw new Error(this.plugin.t("pt-error-task-busy"));
+    // An export keeps its files in the session folder until they are
+    // imported, and the next Python run clears that folder.
+    if (this.busy || (this.exporting && command !== "session-export")) throw new Error(this.plugin.t("pt-error-task-busy"));
     if (this.closed) return;
     this.busy = true;
     this.command = command;
@@ -176,7 +176,8 @@ var PaperTranslatorTextTranslation = class {
       let settings = this.plugin.getSettings();
       let job = { ...this.plugin.apiJob(settings), lang_out: this.lang,
         qps: settings.qps, custom_prompt: settings.customPrompt,
-        session_dir: this.folder, ...(cancelFile ? { cancel_file: cancelFile } : {}), ...fields };
+        session_dir: this.folder, ...(cancelFile ? { cancel_file: cancelFile } : {}),
+        ...await this.readerBase(), ...fields };
       let { exitCode, result, log } = await this.plugin.run(
         this.plugin.venvPython, [this.plugin.runnerPath, command], {
           input: JSON.stringify(job),
@@ -206,14 +207,11 @@ var PaperTranslatorTextTranslation = class {
 
   async presentDocument(message) {
     if (this.closed) return;
+    let saved = await this.readReaderRecord();
     if (!this.readerItem) {
-      try {
-        let saved = JSON.parse(await IOUtils.readUTF8(PathUtils.join(this.folder, "reader-item.json")));
-        let item = Zotero.Items.getByLibraryAndKey(saved.libraryID, saved.key);
-        if (item?.isPDFAttachment() && !item.deleted && await item.getFilePathAsync()) this.readerItem = item;
-      }
-      catch { /* A new session has no working attachment yet. */ }
+      this.readerItem = await this.recordedReaderItem(saved);
       if (!this.readerItem) {
+        if (!message.path) throw new Error(this.plugin.t("pt-error-preview-update"));
         let base = Zotero.File.truncateFileName(this.attachment.attachmentFilename.replace(/\.pdf$/i, ""), 80);
         this.readerItem = await Zotero.Attachments.importFromFile({
           file: message.path, libraryID: this.attachment.libraryID,
@@ -222,9 +220,8 @@ var PaperTranslatorTextTranslation = class {
           fileBaseName: `${base}.${this.lang}.dual`,
           title: this.plugin.t("pt-attachment-text-translation"),
         });
-        await IOUtils.writeUTF8(PathUtils.join(this.folder, "reader-item.json"), JSON.stringify({
-          libraryID: this.readerItem.libraryID, key: this.readerItem.key,
-        }));
+        await this.writeReaderRecord(message.generation);
+        saved = await this.readReaderRecord();
       }
       await this.plugin.rememberReader(this);
     }
@@ -235,9 +232,19 @@ var PaperTranslatorTextTranslation = class {
     }
     let target = await this.readerItem.getFilePathAsync();
     if (!target || target === await this.attachment.getFilePathAsync()) throw new Error(this.plugin.t("pt-error-preview-update"));
-    await IOUtils.copy(message.path, target + ".pt-tmp");
-    await IOUtils.move(target + ".pt-tmp", target, { noOverwrite: false });
-    if (this.currentGeneration !== null) {
+    // A message without a path means the attachment already holds this
+    // generation. Rewriting identical bytes would only trigger a sync upload.
+    let copied = false;
+    if (saved.key !== this.readerItem.key || saved.generation !== message.generation) {
+      if (!message.path) throw new Error(this.plugin.t("pt-error-preview-update"));
+      await IOUtils.copy(message.path, target + ".pt-tmp");
+      await IOUtils.move(target + ".pt-tmp", target, { noOverwrite: false });
+      await this.writeReaderRecord(message.generation);
+      copied = true;
+    }
+    // The attachment is now the only copy the plugin keeps.
+    if (message.path) await IOUtils.remove(message.path, { ignoreAbsent: true });
+    if (copied && this.currentGeneration !== null) {
       let bytes = await IOUtils.read(target);
       for (let reader of this.readers) {
         if (!reader || reader._isUninitialized || reader._isTabClosed || !reader._internalReader) continue;
@@ -261,6 +268,32 @@ var PaperTranslatorTextTranslation = class {
     }
     this.currentGeneration = message.generation;
     this.send("document_updated");
+  }
+
+  async readReaderRecord() {
+    try { return JSON.parse(await IOUtils.readUTF8(PathUtils.join(this.folder, "reader-item.json"))); }
+    catch { return {}; } // A new session has no working attachment yet.
+  }
+
+  async recordedReaderItem(saved) {
+    let item = saved.key && Zotero.Items.getByLibraryAndKey(saved.libraryID, saved.key);
+    return item?.isPDFAttachment() && !item.deleted && await item.getFilePathAsync() ? item : null;
+  }
+
+  /** Lets Python redraw only changed pages into the dual PDF Zotero already has. */
+  async readerBase() {
+    let saved = await this.readReaderRecord();
+    let item = this.readerItem?.key === saved.key ? this.readerItem : await this.recordedReaderItem(saved);
+    let path = item && !item.deleted && await item.getFilePathAsync();
+    // Generations are strings: as JavaScript numbers they would be rounded.
+    return path && typeof saved.generation === "string"
+      ? { reader_base: path, reader_generation: saved.generation } : {};
+  }
+
+  async writeReaderRecord(generation) {
+    await IOUtils.writeUTF8(PathUtils.join(this.folder, "reader-item.json"), JSON.stringify({
+      libraryID: this.readerItem.libraryID, key: this.readerItem.key, generation,
+    }));
   }
 
   setReaderTitle(reader) {
@@ -380,6 +413,9 @@ var PaperTranslatorTextTranslation = class {
       throw error;
     }
     finally {
+      // Zotero imported its own copies; the typesetting output is disposable.
+      await IOUtils.remove(PathUtils.join(this.folder, "output"), { recursive: true, ignoreAbsent: true })
+        .catch(error => Zotero.logError(error));
       this.exporting = false;
       unsubscribe();
       this.send("status");

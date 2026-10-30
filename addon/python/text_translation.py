@@ -1,4 +1,4 @@
-"""Persistent PDF structure, paragraph jobs, previews and PDF export.
+"""Persistent PDF structure, paragraph jobs, the dual reader PDF and export.
 
 All session files are local. Credentials only arrive through stdin and are never
 stored in the manifest. The immutable structure is JSON, not executable pickle.
@@ -88,9 +88,18 @@ def open_session(job, emit):
             if item["status"] in ("running", "queued"):
                 item["status"] = "done" if item.get("translation") else "pending"
                 item["error"] = "The previous task was interrupted. Translation can be resumed."
+        # Per-page preview files belonged to an older cache layout.
+        state.pop("previews", None)
+        if not (folder / "original.pdf").exists():
+            # The snapshot expired with the parse cache; the fingerprint
+            # above proves the attachment still holds the same PDF.
+            shutil.copyfile(job["input"], folder / "original.pdf")
+        if state["parse_status"] == "ready" and not parse_cache_ready(folder):
+            state["parse_status"] = "expired"
         save_state(folder, state)
         emit("session", session=state)
-        write_reader_document(folder, state, emit)
+        # Reuses the dual PDF in Zotero unless pages changed or it is missing.
+        publish(folder, state, job, emit)
         return
     # Keep a private source snapshot, so later attachment edits cannot corrupt
     # the coordinate/structure mapping of an existing session.
@@ -98,11 +107,11 @@ def open_session(job, emit):
     state = {"schema": SCHEMA, "fingerprint": digest,
              "name": Path(job["input"]).name, "lang_out": job.get("lang_out", "zh"),
              "created_at": time.time(), "parse_status": "pending", "pages": [],
-             "paragraphs": [], "previews": {}, "revision": 0}
+             "paragraphs": [], "revision": 0}
     read_source_pages(folder / "original.pdf", state, emit)
     save_state(folder, state)
     emit("session", session=state)
-    write_reader_document(folder, state, emit)
+    publish(folder, state, job, emit)
 
 
 def make_config(folder, job, model=None, *, rendering=False):
@@ -239,7 +248,7 @@ def parse_session(job, emit):
 
     folder = Path(job["session_dir"])
     state = load_state(folder)
-    if state["parse_status"] == "ready" and (structure_path(folder).exists() or (folder / "structure.json").exists()):
+    if state["parse_status"] == "ready" and parse_cache_ready(folder):
         emit("session", session=state)
         return
     emit("progress", stage="Parsing PDF structure", stage_id="pt-stage-parse-structure", overall=5)
@@ -304,13 +313,46 @@ def parse_session(job, emit):
             for index, page in enumerate(normalized_pdf):
                 page.set_rotation(0)
                 state["pages"][index].update(width=page.rect.width, height=page.rect.height)
+        carry_over_translations(state, records)
         state.update(parse_status="ready", paragraphs=records,
                      document_title=next((p["text"] for p in records if p["kind"] == "title"), state["name"]))
         save_state(folder, state)
         emit("session", session=state)
-        write_reader_document(folder, state, emit)
+        publish(folder, state, job, emit)
     finally:
         pdf.close()
+        clear_scratch(folder)
+
+
+TRANSLATION_FIELDS = ("translation", "history", "usage", "translated_at", "model", "attempts")
+
+
+def carry_over_translations(state, records):
+    """Keep paid-for translations when an expired cache is parsed again.
+
+    The same BabelDOC version yields the same paragraph ids. After an upgrade
+    ids may shift, so fall back to matching the page and source text.
+    """
+    previous = [p for p in state.get("paragraphs", []) if p.get("translation")]
+    by_id = {p["id"]: p for p in previous}
+    by_text = {(p["page"], p["text"]): p for p in previous}
+    used = set()
+    for record in records:
+        old = by_id.get(record["id"]) or by_text.get((record["page"], record["text"]))
+        if not old or old["id"] in used:
+            continue
+        used.add(old["id"])
+        if old["input"] == record["input"]:
+            record.update({key: old[key] for key in TRANSLATION_FIELDS if key in old}, status="done")
+        else:
+            # Placeholders differ, so the old text cannot be typeset here.
+            # Offer it as history instead of losing it.
+            record["history"] = (old.get("history", []) + [
+                {"translation": old["translation"], "at": old.get("translated_at")}])[-5:]
+    orphans = [p for p in previous if p["id"] not in used]
+    if orphans:
+        state.setdefault("orphaned_translations", []).extend(
+            {key: p.get(key) for key in ("page", "text", "translation", "translated_at")} for p in orphans)
 
 
 def apply_results(docs, state, config, *, blank_pending):
@@ -332,22 +374,23 @@ def apply_results(docs, state, config, *, blank_pending):
     return docs
 
 
-def render_pdf(folder, state, job, *, page_number=None, blank_pending=False):
+def render_pdf(folder, state, job, *, pages=None, blank_pending=False):
+    """Typeset the given page numbers for the reader, or every page for export."""
     import babeldoc.format.pdf.high_level as hl
     from babeldoc.format.pdf.document_il.midend.typesetting import Typesetting
     from babeldoc.format.pdf.document_il.backend.pdf_creater import PDFCreater
 
     hl.init()
-    config = make_config(folder, job, rendering=page_number is not None)
-    docs = read_structure(folder, {page_number} if page_number else None)
+    config = make_config(folder, job, rendering=pages is not None)
+    docs = read_structure(folder, pages)
     apply_results(docs, state, config, blank_pending=blank_pending)
     Typesetting(config).typesetting_document(docs)
-    media = {} if page_number else {int(k): v for k, v in json.loads((folder / "mediabox.json").read_text()).items()}
+    media = {} if pages is not None else {int(k): v for k, v in json.loads((folder / "mediabox.json").read_text()).items()}
     config.no_dual = True
     config.no_mono = False
     creator = PDFCreater(folder / "source.pdf", docs, config, media)
     result = creator.write(config)
-    if page_number is None:
+    if pages is None:
         finish_export(folder, job, result, creator, config)
     return result
 
@@ -386,6 +429,42 @@ def finish_export(folder, job, result, creator, config):
             result.mono_pdf_path = None
 
 
+def parse_cache_ready(folder):
+    """The parse result needed to typeset pages is still on disk.
+
+    The plugin deletes it after a week unused; translations in session.json
+    are kept and survive the next parse.
+    """
+    folder = Path(folder)
+    return ((structure_path(folder).exists() or (folder / "structure.json").exists())
+            and (folder / "source.pdf").exists() and (folder / "mediabox.json").exists())
+
+
+def page_translation_fingerprint(state, number):
+    values = [(p["id"], p.get("translation", "")) for p in state["paragraphs"] if p["page"] == number]
+    return hashlib.sha256(json.dumps(values, ensure_ascii=False).encode()).hexdigest()
+
+
+def stale_pages(state):
+    """Translated pages that the dual PDF shows out of date, or not at all."""
+    drawn = (state.get("reader_document") or {}).get("pages", {})
+    translated = {p["page"] for p in state["paragraphs"] if p.get("translation")}
+    return {n for n in translated if drawn.get(str(n)) != page_translation_fingerprint(state, n)}
+
+
+def reader_base(state, job):
+    """The dual PDF Zotero already shows, when it is the one recorded here.
+
+    The plugin passes the attachment's path and the generation it last copied
+    there. Generations travel as strings: JavaScript numbers would round them.
+    """
+    reader = state.get("reader_document") or {}
+    path = job.get("reader_base")
+    if not path or "generation" not in reader or job.get("reader_generation") != str(reader["generation"]):
+        return None
+    return Path(path) if Path(path).is_file() else None
+
+
 def native_paragraph_rect(record, page_info, original_page):
     """Map normalized, upright IL coordinates to the visible native PDF page."""
     import pymupdf
@@ -401,89 +480,118 @@ def native_paragraph_rect(record, page_info, original_page):
     return [rect.x0, height - rect.y1, rect.x1, height - rect.y0]
 
 
-def write_reader_document(folder, state, emit):
-    """A real, searchable PDF for Zotero's existing reader and toolbar.
+def reader_geometry(original, state):
+    """Where each paragraph sits on the side-by-side pages, for hover and menus."""
+    geometry = []
+    for index, source in enumerate(original):
+        number = index + 1
+        width, height = source.rect.width, source.rect.height
+        paragraphs = []
+        if state.get("parse_status") == "ready":
+            for record in state["paragraphs"]:
+                if record["page"] != number or not record["translatable"]:
+                    continue
+                rect = native_paragraph_rect(record, state["pages"][index], source)
+                paragraphs.append({"id": record["id"], "source": rect,
+                                   "target": [rect[0] + width, rect[1], rect[2] + width, rect[3]]})
+        geometry.append({"page": number, "source_width": width, "width": 2 * width,
+                         "height": height, "paragraphs": paragraphs})
+    return geometry
 
-    The left pages are copied from the immutable original. The right pages use
-    completed vector previews, or remain genuinely empty. No HTML reader UI is
-    needed. Each completed document is immutable while Zotero is reading it.
+
+def draw_reader_page(combined, index, original, rendered):
+    """Original page on the left; its typeset translation, if any, on the right."""
+    import pymupdf
+    source = original[index]
+    width, height, angle = source.rect.width, source.rect.height, source.rotation
+    crop = source.cropbox
+    source.set_rotation(0)
+    page = combined.new_page(pno=index, width=2 * width, height=height)
+    if source.get_contents():
+        page.show_pdf_page(pymupdf.Rect(0, 0, width, height), original, index,
+                           rotate=-angle, keep_proportion=True)
+    if rendered is not None:
+        translated = rendered[index]
+        translated.set_rotation(0)
+        translated.set_cropbox(crop)
+        if translated.get_contents():
+            page.show_pdf_page(pymupdf.Rect(width, 0, 2 * width, height), rendered, index,
+                               rotate=-angle, keep_proportion=True)
+
+
+def publish(folder, state, job, emit, *, force=False):
+    """Bring the dual PDF in Zotero up to date, drawing only pages that changed.
+
+    The attachment itself is the store of finished pages, so nothing else is
+    kept between runs. Without a matching attachment (first open, deleted, or
+    force) every translated page is drawn into a fresh document.
     """
     import pymupdf
     folder = Path(folder)
-    generation = time.time_ns()
-    filename = f"reader-{generation}.pdf"
-    geometry = []
-    with pymupdf.open(folder / "original.pdf") as original, pymupdf.open() as combined:
-        for index, source in enumerate(original):
-            number = index + 1
-            width, height, angle = source.rect.width, source.rect.height, source.rotation
-            page_info = state["pages"][index]
-            paragraphs = []
-            if state.get("parse_status") == "ready":
-                for record in state["paragraphs"]:
-                    if record["page"] != number or not record["translatable"]:
+    base = None if force else reader_base(state, job)
+    pages = stale_pages(state) if base else {p["page"] for p in state["paragraphs"] if p.get("translation")}
+    if state.get("parse_status") != "ready" or not parse_cache_ready(folder):
+        pages = set()  # Drawn once the expired parse result is rebuilt.
+    reader = state.get("reader_document") or {}
+    with pymupdf.open(folder / "original.pdf") as original:
+        geometry = reader_geometry(original, state)
+        if base and not pages:
+            # The attachment is already current; only the paragraph map may
+            # have changed, e.g. after a new parse.
+            reader["geometry"] = geometry
+            state["reader_document"] = reader
+            save_state(folder, state)
+            emit("reader_document", path=None, generation=str(reader["generation"]), geometry=geometry)
+            return
+        rendered = None
+        try:
+            if pages:
+                emit("progress", stage="Typesetting translation", stage_id="pt-stage-typeset", overall=95)
+                rendered = pymupdf.open(render_pdf(folder, state, job, pages=pages, blank_pending=True).mono_pdf_path)
+            combined = pymupdf.open(base) if base else pymupdf.open()
+            try:
+                for index in range(len(original)):
+                    if base and index + 1 not in pages:
                         continue
-                    rect = native_paragraph_rect(record, page_info, source)
-                    paragraphs.append({"id": record["id"], "source": rect,
-                                       "target": [rect[0] + width, rect[1], rect[2] + width, rect[3]]})
-            geometry.append({"page": number, "source_width": width, "width": 2 * width,
-                             "height": height, "paragraphs": paragraphs})
-            crop = source.cropbox
-            source.set_rotation(0)
-            output_page = combined.new_page(width=2 * width, height=height)
-            if source.get_contents():
-                output_page.show_pdf_page(pymupdf.Rect(0, 0, width, height), original, index,
-                                          rotate=-angle, keep_proportion=True)
-            preview = state.get("previews", {}).get(str(number), {})
-            preview_path = folder / preview.get("pdf", "missing.pdf")
-            if preview.get("pdf") and preview_path.is_file():
-                with pymupdf.open(preview_path) as translated:
-                    translated[0].set_rotation(0)
-                    translated[0].set_cropbox(crop)
-                    if translated[0].get_contents():
-                        output_page.show_pdf_page(pymupdf.Rect(width, 0, 2 * width, height), translated, 0,
-                                                  rotate=-angle, keep_proportion=True)
-        toc = original.get_toc()
-        if toc:
-            combined.set_toc(toc)
-        combined.save(folder / filename, garbage=3, deflate=True)
-    state["reader_document"] = {"file": filename, "generation": generation, "geometry": geometry}
+                    if base:
+                        combined.delete_page(index)
+                    draw_reader_page(combined, index, original,
+                                     rendered if index + 1 in pages else None)
+                toc = original.get_toc()
+                if toc:
+                    combined.set_toc(toc)
+                combined.subset_fonts()
+                generation = time.time_ns()
+                filename = f"reader-{generation}.pdf"
+                combined.save(folder / filename, garbage=3, deflate=True)
+            finally:
+                combined.close()
+        finally:
+            if rendered is not None:
+                rendered.close()
+            clear_scratch(folder)
+    drawn = dict(reader.get("pages", {})) if base else {}
+    drawn.update({str(n): page_translation_fingerprint(state, n) for n in pages})
+    state["reader_document"] = {"generation": generation, "geometry": geometry, "pages": drawn}
     save_state(folder, state)
-    emit("reader_document", path=str(folder / filename), generation=generation, geometry=geometry)
-    # The prior file may still be in the native reader's reload queue.
-    for old in sorted(folder.glob("reader-*.pdf"), reverse=True)[2:]:
-        old.unlink(missing_ok=True)
+    # The plugin copies this file into the attachment, then deletes it.
+    emit("reader_document", path=str(folder / filename), generation=str(generation), geometry=geometry)
 
 
-def save_vector_preview(folder, result, number, revision):
-    import pymupdf
-    pdf_name = f"translation-{number}-{revision}.pdf"
-    with pymupdf.open(result.mono_pdf_path) as pdf:
-        page = pdf[number - 1]
-        page.set_rotation(0)
-        with pymupdf.open() as single:
-            single.insert_pdf(pdf, from_page=number - 1, to_page=number - 1)
-            single.subset_fonts()
-            single.save(folder / pdf_name, garbage=3, deflate=True)
-    return {"pdf": pdf_name, "revision": revision}
+def clear_scratch(folder):
+    """BabelDOC's typesetting output and working files are only needed mid-run."""
+    for name in ("output", "working"):
+        shutil.rmtree(Path(folder) / name, ignore_errors=True)
 
 
-def page_translation_fingerprint(state, number):
-    values = [(p["id"], p.get("translation", "")) for p in state["paragraphs"] if p["page"] == number]
-    return hashlib.sha256(json.dumps(values, ensure_ascii=False).encode()).hexdigest()
-
-
-def preview_page(folder, state, job, number, emit, *, publish=True):
-    result = render_pdf(folder, state, job, page_number=number, blank_pending=True)
-    revision = time.time_ns()
-    state["previews"][str(number)] = save_vector_preview(folder, result, number, revision)
-    state["previews"][str(number)]["fingerprint"] = page_translation_fingerprint(state, number)
-    save_state(folder, state)
-    emit("page_preview", page=number, preview=state["previews"][str(number)])
-    if publish:
-        write_reader_document(folder, state, emit)
-    for old in sorted(folder.glob(f"translation-{number}-*.pdf"), reverse=True)[2:]:
-        old.unlink(missing_ok=True)
+def clear_leftovers(folder, state):
+    """Remove files an interrupted or older run left behind."""
+    folder = Path(folder)
+    clear_scratch(folder)
+    current = f"reader-{(state.get('reader_document') or {}).get('generation')}.pdf"
+    for path in list(folder.glob("translation-*.pdf")) + list(folder.glob("reader-*.pdf")):
+        if path.name != current:
+            path.unlink(missing_ok=True)
 
 
 def translate_selection(job, emit):
@@ -560,25 +668,7 @@ def translate_selection(job, emit):
         # Persist paragraph progress immediately, but publish a PDF only after
         # the entire selection finishes (or stops). Native PDF reload replaces
         # its views, so publishing intermediate paragraphs interrupts reading.
-        pages = sorted({record["page"] for record in records if record.get("translation")})
-        updated = []
-        for number in pages:
-            cached = state["previews"].get(str(number), {})
-            if (cached.get("fingerprint") == page_translation_fingerprint(state, number)
-                    and cached.get("pdf") and (folder / cached["pdf"]).exists()):
-                continue
-            emit("progress", stage="Typesetting translation", stage_id="pt-stage-typeset", overall=95)
-            try:
-                preview_page(folder, state, job, number, emit, publish=False)
-                updated.append(number)
-            except Exception as error:
-                emit("preview_error", page=number, message=str(error))
-        if updated:
-            try:
-                write_reader_document(folder, state, emit)
-            except Exception as error:
-                for number in updated:
-                    emit("preview_error", page=number, message=str(error))
+        publish_or_report(folder, state, job, emit)
     finally:
         for record in records:
             if record["status"] in ("running", "queued"):
@@ -600,11 +690,20 @@ def edit_paragraph(job, emit):
     state["revision"] += 1
     save_state(folder, state)
     emit("paragraph", paragraph=record)
-    try:
-        preview_page(folder, state, job, record["page"], emit)
-    except Exception as error:
-        emit("preview_error", page=record["page"], message=str(error))
+    publish_or_report(folder, state, job, emit)
     emit("session", session=state)
+
+
+def publish_or_report(folder, state, job, emit):
+    """Publish changed pages; a typesetting failure leaves translations intact."""
+    pages = stale_pages(state)
+    if not pages:
+        return
+    try:
+        publish(folder, state, job, emit)
+    except Exception as error:
+        for number in sorted(pages):
+            emit("preview_error", page=number, message=str(error))
 
 
 def export_session(job, emit):
@@ -621,16 +720,8 @@ def export_session(job, emit):
 def restore_reader(job, emit):
     folder = Path(job["session_dir"])
     state = load_state(folder)
-    updated = False
-    for number in sorted({p["page"] for p in state["paragraphs"] if p.get("translation")}):
-        cached = state.get("previews", {}).get(str(number), {})
-        if (not cached.get("pdf") or not (folder / cached["pdf"]).exists()
-                or cached.get("fingerprint") != page_translation_fingerprint(state, number)):
-            preview_page(folder, state, job, number, emit, publish=False)
-            updated = True
-    reader = state.get("reader_document", {}).get("file")
-    if updated or job.get("force_reader") or not reader or not (folder / reader).exists():
-        write_reader_document(folder, state, emit)
+    if job.get("force_reader") or not reader_base(state, job) or stale_pages(state):
+        publish(folder, state, job, emit, force=bool(job.get("force_reader")))
 
 
 def run(command, job, emit):
@@ -644,6 +735,8 @@ def run(command, job, emit):
         raise ValueError("Unknown text translation operation.")
     try:
         with FileLock(str(folder / "session.lock"), timeout=0):
+            if (folder / "session.json").exists():
+                clear_leftovers(folder, load_state(folder))
             operations[command](job, emit)
     except Timeout as error:
         raise ValueError("Another task for this document is still running. Try again later.") from error
