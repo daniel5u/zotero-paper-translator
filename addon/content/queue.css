@@ -1,8 +1,17 @@
 /* System colors follow Zotero's light and dark appearance */
 :root {
+  appearance: none;
   color-scheme: light dark;
   font: menu;
   font-size: 13px;
+}
+
+/* This window only needs the global skin for its dropdown popups, so keep
+   the native look of the controls */
+button,
+input,
+select {
+  all: revert;
 }
 
 body {
