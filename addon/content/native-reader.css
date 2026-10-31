@@ -23,3 +23,8 @@
 .pt-native-status { color:var(--fill-secondary, #666); font:10px/12px system-ui,sans-serif; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:start; }
 .pt-native-status.pt-native-error { color:var(--accent-red, #ad3c36); }
 .pt-native-primary { font-weight:600!important; }
+/* Keep custom reader controls outside Zotero's window drag region. */
+.pt-native-toolbar,
+.paper-translator-text-translation-button {
+  -moz-window-dragging: no-drag;
+}
