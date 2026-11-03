@@ -729,6 +729,21 @@ def export_session(job, emit):
          dual=str(result.dual_pdf_path) if result.dual_pdf_path else None)
 
 
+def discard_translations(job, emit):
+    """The user trashed the translated PDF: forget every translation, keep the parse."""
+    folder = Path(job["session_dir"])
+    state = load_state(folder)
+    for record in state["paragraphs"]:
+        for key in TRANSLATION_FIELDS:
+            record.pop(key, None)
+        record.update(status="pending", error="")
+    state.pop("orphaned_translations", None)
+    state.pop("reader_document", None)
+    save_state(folder, state)
+    clear_leftovers(folder, state)
+    emit("session", session=state)
+
+
 def restore_reader(job, emit):
     folder = Path(job["session_dir"])
     state = load_state(folder)
@@ -742,7 +757,8 @@ def run(command, job, emit):
     folder.mkdir(parents=True, exist_ok=True)
     operations = {"session-open": open_session, "session-parse": parse_session,
                   "session-translate": translate_selection, "session-edit": edit_paragraph,
-                  "session-export": export_session, "session-reader": restore_reader}
+                  "session-export": export_session, "session-reader": restore_reader,
+                  "session-discard": discard_translations}
     if command not in operations:
         raise ValueError("Unknown text translation operation.")
     try:

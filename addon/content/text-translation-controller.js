@@ -83,6 +83,10 @@ var PaperTranslatorTextTranslation = class {
     try { this.view = JSON.parse(await IOUtils.readUTF8(PathUtils.join(this.folder, "view.json"))); }
     catch { this.view = {}; }
     this.selected = new Set(this.view.selected || []);
+    // The translated PDF was trashed while the plugin could not react to it
+    let saved = await this.readReaderRecord();
+    let recorded = saved.key && Zotero.Items.getByLibraryAndKey(saved.libraryID, saved.key);
+    if (saved.key && (!recorded || recorded.deleted)) await this.plugin.discardSession(this.folder);
     await this.operation("session-open", { input });
     await this.readerUpdates;
     let reader = showReader ? await this.showNativeTab() : this.reader;

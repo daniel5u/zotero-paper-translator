@@ -104,6 +104,10 @@ PaperTranslator = {
     };
     Zotero.Reader.registerEventListener("renderToolbar", this.readerHandler, this.id);
     Zotero.Reader.registerEventListener("createViewContextMenu", this.readerContextHandler, this.id);
+    this.notifierID = Zotero.Notifier.registerObserver({
+      notify: (event, type, ids, extraData) => this.onItemsRemoved(event, ids, extraData)
+        .catch((e) => Zotero.logError(e)),
+    }, ["item"], "paper-translator");
     this.prefPaneID = await Zotero.PreferencePanes.register({
       pluginID: this.id,
       src: this.rootURI + "content/preferences.xhtml",
@@ -144,6 +148,7 @@ PaperTranslator = {
     this.textTranslations.clear();
     if (this.readerHandler) Zotero.Reader.unregisterEventListener("renderToolbar", this.readerHandler);
     if (this.readerContextHandler) Zotero.Reader.unregisterEventListener("createViewContextMenu", this.readerContextHandler);
+    if (this.notifierID) Zotero.Notifier.unregisterObserver(this.notifierID);
     for (let binding of this.readerBindings) binding.dispose();
     this.readerBindings.clear();
     for (let menuID of this.menuIDs) {
@@ -784,9 +789,51 @@ PaperTranslator = {
     await this.registryWrite;
   },
 
+  /** Trashing or erasing a text translation's PDF discards its translations. */
+  async onItemsRemoved(event, ids, extraData) {
+    if (!["trash", "delete"].includes(event)) return;
+    for (let id of ids) {
+      // Erased items are gone; the event carries their library and key
+      let item = event === "trash" ? Zotero.Items.get(id) : extraData?.[id];
+      let link = item && this.readerRegistry[`${item.libraryID}/${item.key}`];
+      if (!link) continue;
+      for (let translation of [...this.textTranslations.values()]) {
+        if (translation.readerItem?.libraryID === item.libraryID && translation.readerItem.key === item.key) translation.close();
+      }
+      let prefix = `${link.libraryID}-${link.sourceKey}-${link.lang}-`;
+      for (let folder of await IOUtils.getChildren(PathUtils.join(this.dataDir, "sessions")).catch(() => [])) {
+        if (!PathUtils.filename(folder).startsWith(prefix)) continue;
+        let record = await IOUtils.readJSON(PathUtils.join(folder, "reader-item.json")).catch(() => null);
+        if (record?.libraryID === item.libraryID && record.key === item.key) await this.discardSession(folder);
+      }
+    }
+  },
+
+  /** Forget a session's translations but keep its parse, so the paper starts over. */
+  async discardSession(folder) {
+    // A translation that was just stopped may still hold the session lock briefly
+    for (let attempt = 1; ; attempt++) {
+      let { exitCode, result, log } = await this.run(this.venvPython, [this.runnerPath, "session-discard"], {
+        input: JSON.stringify({ session_dir: folder }),
+      });
+      if (exitCode === 0 && result?.type !== "error") break;
+      if (attempt === 5) {
+        let path = await this.saveLog("reader", log);
+        let detail = result?.message || this.t("pt-error-process-exit", { code: exitCode });
+        throw new Error(this.t("pt-error-with-log", { detail, log: path }));
+      }
+      await Zotero.Promise.delay(500);
+    }
+    await IOUtils.remove(PathUtils.join(folder, "reader-item.json"), { ignoreAbsent: true });
+    let [libraryID, key] = PathUtils.filename(folder).split("-");
+    this.rememberStatus(`${libraryID}/${key}`, await IOUtils.readJSON(PathUtils.join(folder, "summary.json")));
+    this.refreshStatusColumn();
+  },
+
   /**
-   * Keep each paper's translations (session.json) for good, but drop the
-   * parse cache of papers unused for a while; it is rebuilt on demand. A
+   * Keep each paper's translations (session.json) until its translated PDF
+   * is trashed, but drop the parse cache of papers unused for a while; it is
+   * rebuilt on demand. A
    * session whose source attachment no longer exists is removed entirely.
    */
   async cleanSessions() {
