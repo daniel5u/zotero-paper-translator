@@ -217,7 +217,7 @@ pt-pref-bridge-heading = 阅读助手
 pt-pref-codex-path = Codex 程序路径
 pt-pref-codex-path-input =
     .placeholder = 自动查找
-pt-pref-bridge-terminal = 终端
+pt-pref-bridge-terminal = 终端 (Linux)
 pt-pref-bridge-terminal-input =
     .placeholder = 自动选择，或填写终端程序路径
 

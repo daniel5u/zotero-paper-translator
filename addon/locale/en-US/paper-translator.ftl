@@ -220,7 +220,7 @@ pt-pref-bridge-heading = Reading assistant
 pt-pref-codex-path = Codex executable
 pt-pref-codex-path-input =
     .placeholder = Automatic
-pt-pref-bridge-terminal = Terminal
+pt-pref-bridge-terminal = Terminal (Linux)
 pt-pref-bridge-terminal-input =
     .placeholder = Automatic, or a terminal executable path
 
