@@ -1,4 +1,5 @@
-.pt-native-toolbar { display:inline-flex; align-items:center; }
+/* Keep the inline wrapper's baseline and height stable when progress appears. */
+.pt-native-toolbar { display:inline-flex; align-items:center; align-self:center; vertical-align:middle; min-height:28px; }
 .pt-native-progress-group { display:inline-flex; flex-direction:column; justify-content:center; gap:3px; flex-shrink:0; width:104px; max-width:14vw; height:24px; margin-inline-end:8px; }
 .pt-native-progress-group[hidden] { display:none; }
 .pt-native-progress { appearance:none; flex-shrink:0; width:100%; height:4px; margin:0; border:0; border-radius:3px; overflow:hidden; background:var(--fill-quinary, #ddd); color:var(--accent-blue, #4080dc); }
@@ -10,19 +11,32 @@
 .pt-paragraph-hover[hidden] { display:none; }
 .paper-translator-text-translation-button { font:inherit; color:var(--fill-primary, #222); white-space:nowrap; padding:3px 7px; border:1px solid transparent; border-radius:3px; background:transparent; cursor:pointer; }
 .paper-translator-text-translation-button:hover { background:var(--fill-quinary, #e6e6e6); }
-.pt-native-menu { position:fixed; z-index:10000; width:274px; padding:10px; border:1px solid var(--fill-tertiary, #ccc); border-radius:5px; background:var(--material-background, #f7f7f7); color:var(--fill-primary, #222); box-shadow:0 3px 14px #0002; font:12px/1.5 system-ui,sans-serif; }
+.pt-native-menu { position:fixed; z-index:10000; box-sizing:border-box; width:352px; max-width:calc(100vw - 16px); padding:10px; border:1px solid var(--fill-tertiary, #ccc); border-radius:6px; background:var(--material-background, #f7f7f7); color:var(--fill-primary, #222); box-shadow:0 3px 14px #0002; font:12px/1.5 system-ui,sans-serif; }
 .pt-native-menu[hidden] { display:none; }
 .pt-native-row { display:flex; gap:6px; align-items:center; margin-top:7px; }
 .pt-native-row>input,.pt-native-row>select { flex:1; min-width:0; }
 .pt-native-row>span { flex-shrink:0; }
 .pt-native-menu button,.pt-native-menu input,.pt-native-menu select { font:inherit; color:inherit; border:1px solid var(--fill-tertiary, #ccc); border-radius:3px; padding:4px 7px; background:var(--material-background, #fff); }
-.pt-native-menu button { cursor:pointer; }
+.pt-native-menu button { cursor:pointer; white-space:nowrap; }
+.pt-native-menu button:enabled:hover { background:var(--fill-quinary, #e6e6e6); }
+.pt-native-menu :is(button,input,select):focus-visible { outline:2px solid var(--accent-blue, #4080dc); outline-offset:2px; }
 .pt-native-menu button:disabled { opacity:.4; cursor:default; }
 .pt-native-menu input { width:100%; }
-.pt-native-menu>select { margin-top:7px; width:100%; }
+.pt-native-choices { display:flex; flex-shrink:0; gap:0; }
+.pt-native-choices button { padding:2px 10px; border-radius:0; }
+.pt-native-choices button+button { margin-inline-start:-1px; }
+.pt-native-choices button:first-child { border-radius:3px 0 0 3px; }
+.pt-native-choices button:last-child { border-radius:0 3px 3px 0; }
+.pt-native-actions { flex-wrap:wrap; margin-top:10px; }
+.pt-native-menu .pt-native-primary { background:var(--accent-blue, #4080dc); border-color:var(--accent-blue, #4080dc); color:#fff; font-weight:600; }
+.pt-native-menu .pt-native-primary:enabled:hover { background:color-mix(in srgb, var(--accent-blue, #4080dc) 88%, #000); }
+.pt-native-menu .pt-native-stop:enabled { color:var(--accent-red, #ad3c36); }
+.pt-native-menu .pt-native-stop:enabled:hover { background:color-mix(in srgb, var(--accent-red, #ad3c36) 10%, transparent); }
+.pt-native-menu .pt-native-agent { margin-inline-start:auto; color:var(--accent-blue, #4080dc); border-color:color-mix(in srgb, var(--accent-blue, #4080dc) 40%, transparent); background:color-mix(in srgb, var(--accent-blue, #4080dc) 6%, transparent); }
+.pt-native-menu .pt-native-agent:enabled:hover { background:color-mix(in srgb, var(--accent-blue, #4080dc) 12%, transparent); }
+.pt-native-export { margin-top:10px; padding-top:10px; border-top:1px solid var(--fill-quinary, #ddd); }
 .pt-native-status { color:var(--fill-secondary, #666); font:10px/12px system-ui,sans-serif; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:start; }
 .pt-native-status.pt-native-error { color:var(--accent-red, #ad3c36); }
-.pt-native-primary { font-weight:600!important; }
 /* Keep custom reader controls outside Zotero's window drag region. */
 .pt-native-toolbar,
 .paper-translator-text-translation-button {

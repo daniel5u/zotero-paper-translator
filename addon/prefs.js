@@ -2,7 +2,7 @@ pref("extensions.paper-translator.baseURL", "https://api.openai.com/v1");
 pref("extensions.paper-translator.apiKey", "");
 pref("extensions.paper-translator.model", "");
 pref("extensions.paper-translator.langOut", "zh");
-// How to turn off thinking: "auto" or a field from THINKING_OFF in translation.py
+// How to turn off thinking: "auto" or a field from THINKING_OFF in translation/api.py
 pref("extensions.paper-translator.thinkingMethod", "auto");
 // "auto", "max_tokens" or "max_completion_tokens"
 pref("extensions.paper-translator.tokenField", "auto");
@@ -14,3 +14,10 @@ pref("extensions.paper-translator.qps", "8");
 pref("extensions.paper-translator.customPrompt", "You are a professional translator of academic papers. Translate into fluent, accurate text using the standard terminology of the field. Never translate person names, author lists, citations (e.g. 'Xu et al., 2019'), URLs, email addresses, code identifiers or dataset/model names; keep them exactly as in the source.");
 pref("extensions.paper-translator.openWhenDone", true);
 pref("extensions.paper-translator.uvPath", "");
+pref("extensions.paper-translator.codexPath", "");
+pref("extensions.paper-translator.bridgeTerminal", "");
+pref("extensions.paper-translator.bridgeClient", "codex-desktop");
+pref("extensions.paper-translator.dshDesktopPath", "");
+pref("extensions.paper-translator.dshHome", "");
+pref("extensions.paper-translator.opencodePath", "");
+pref("extensions.paper-translator.opencodeDesktopPath", "");

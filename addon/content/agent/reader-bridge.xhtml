@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8"/>
+  <title>Agent</title>
+  <link rel="stylesheet" href="chrome://global/skin/global.css"/>
+  <script src="chrome://zotero/content/include.js"></script>
+  <script src="chrome://paper-translator/content/agent/reader-bridge-dialog.js"></script>
+  <style>
+    body { margin: 20px; color: var(--fill-primary); background: var(--material-background); font: menu; }
+    h1 { font-size: 1.1em; margin: 0 0 16px; overflow-wrap: anywhere; }
+    .row { display: grid; grid-template-columns: 6em 1fr; align-items: center; gap: 10px; margin: 12px 0; }
+    .client-controls { display: flex; gap: 8px; min-width: 0; }
+    .client-controls select { flex: 1; min-width: 0; }
+    .client-controls button { flex-shrink: 0; }
+    select { width: 100%; box-sizing: border-box; }
+    #note, #status { color: var(--fill-secondary); overflow-wrap: anywhere; }
+    #status.error { color: var(--accent-red); }
+    progress { width: 100%; height: 5px; }
+    footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+    button { appearance: none; font: inherit; line-height: 1.4; padding: 5px 10px; border: 1px solid var(--fill-tertiary, #aaa); border-radius: 4px; background: var(--fill-quinary, #eee); color: var(--fill-primary, #222); box-shadow: none; cursor: pointer; }
+    button:enabled:hover { background: var(--fill-quaternary, #ddd); }
+    button:disabled { opacity: .45; cursor: default; }
+    button:focus-visible { outline: 2px solid var(--accent-blue, #4072e5); outline-offset: 2px; }
+    button.primary { background: var(--accent-blue, #4072e5); color: white; border-color: var(--accent-blue, #4072e5); }
+    button.primary:enabled:hover { background: color-mix(in srgb, var(--accent-blue, #4072e5) 88%, black); }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <h1 id="title"></h1>
+  <div class="row"><label id="client-label" for="client"></label><div class="client-controls"><select id="client"><option value="codex-desktop">Codex Desktop</option><option value="codex-cli">Codex CLI</option><option value="dsh-desktop">DeepSeek Harness Desktop</option><option value="opencode-desktop">OpenCode Desktop</option><option value="opencode-cli">OpenCode CLI</option></select><button id="setup" hidden="hidden"></button></div></div>
+  <p id="note"></p>
+  <progress id="progress" hidden="hidden"></progress>
+  <p id="status" role="status" aria-live="polite"></p>
+  <footer><button id="close"></button><button id="create" disabled="disabled"></button><button id="open" hidden="hidden"></button></footer>
+</body>
+</html>

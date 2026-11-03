@@ -1,4 +1,4 @@
-/* global Zotero, Services, ChromeUtils, IOUtils, PathUtils, Localization, PaperTranslatorQueue, PaperTranslatorTextTranslation, PaperTranslatorNativeReader */
+/* global Zotero, Services, ChromeUtils, IOUtils, PathUtils, Localization, PaperTranslatorQueue, PaperTranslatorTextTranslation, PaperTranslatorNativeReader, PaperTranslatorReaderBridge */
 
 var { Subprocess } = ChromeUtils.importESModule("resource://gre/modules/Subprocess.sys.mjs");
 
@@ -39,6 +39,7 @@ PaperTranslator = {
   menuIDs: [],
   prefPaneID: null,
   setupPromise: null,
+  readerBridge: null,
   // False once shut down, so a pending session cleanup does nothing
   active: false,
   queue: null,
@@ -65,9 +66,10 @@ PaperTranslator = {
     // The preferences pane runs in its own scope and reaches the plugin here
     Zotero.PaperTranslator = this;
     this.migratePrefs();
-    this.nativeCSS = await Zotero.File.getResourceAsync(this.rootURI + "content/native-reader.css");
+    this.nativeCSS = await Zotero.File.getResourceAsync(this.rootURI + "content/reader/native-reader.css");
     try { this.readerRegistry = JSON.parse(await IOUtils.readUTF8(PathUtils.join(this.dataDir, "native-readers.json"))); }
     catch { this.readerRegistry = {}; }
+    this.readerBridge = new PaperTranslatorReaderBridge(this);
     this.registerMenus();
     this.readerHandler = (event) => {
       if (event.reader.type !== "pdf") return;
@@ -84,7 +86,8 @@ PaperTranslator = {
       }
     };
     this.readerContextHandler = (event) => {
-      if (event.reader.type !== "pdf" || !event.params.position?.rects?.length) return;
+      if (event.reader.type !== "pdf") return;
+      if (!event.params.position?.rects?.length) return;
       let translation = [...this.textTranslations.values()].find(w => w.readerItem?.id === event.reader.itemID);
       if (translation?.session?.parse_status !== "ready") return;
       let item = Zotero.Items.get(event.reader.itemID);
@@ -110,8 +113,8 @@ PaperTranslator = {
     }, ["item"], "paper-translator");
     this.prefPaneID = await Zotero.PreferencePanes.register({
       pluginID: this.id,
-      src: this.rootURI + "content/preferences.xhtml",
-      scripts: [this.rootURI + "content/preferences.js"],
+      src: this.rootURI + "content/preferences/preferences.xhtml",
+      scripts: [this.rootURI + "content/preferences/preferences.js"],
     });
     for (let win of Zotero.getMainWindows()) {
       this.addToWindow(win);
@@ -137,6 +140,7 @@ PaperTranslator = {
 
   shutdown() {
     this.active = false;
+    this.readerBridge?.shutdown();
     this.queue?.shutdown();
     if (this.queueWindow && !this.queueWindow.closed) {
       this.queueWindow.close();
@@ -225,7 +229,7 @@ PaperTranslator = {
       return;
     }
     this.queueWindow = Zotero.getMainWindow().openDialog(
-      "chrome://paper-translator/content/queue.xhtml", "paper-translator-queue",
+      "chrome://paper-translator/content/queue/queue.xhtml", "paper-translator-queue",
       "chrome,resizable,centerscreen,dialog=no,width=820,height=620"
     );
   },
@@ -333,7 +337,7 @@ PaperTranslator = {
       qps: parseInt(this.getPref("qps")) || 4,
       customPrompt: (this.getPref("customPrompt") || "").trim(),
       openWhenDone: !!this.getPref("openWhenDone"),
-      // "auto", or a field the user chose; see THINKING_OFF in translation.py
+      // "auto", or a field the user chose; see THINKING_OFF in translation/api.py
       thinkingMethod: this.getPref("thinkingMethod") || "auto",
       tokenField: this.getPref("tokenField") || "auto",
       // 0 means automatic: start at 8192 and double when an answer is cut off
@@ -455,11 +459,33 @@ PaperTranslator = {
 
   async installPythonFiles() {
     await IOUtils.makeDirectory(this.dataDir, { ignoreExisting: true });
-    for (let name of ["runner.py", "text_translation.py", "translation.py", "requirements.lock"]) {
-      let text = await this.readBundledPythonFile(name);
-      await IOUtils.writeUTF8(PathUtils.join(this.dataDir, name), text);
+    for (let [folder, files] of [
+      ["", ["runner.py", "requirements.lock"]],
+      ["translation", ["__init__.py", "api.py", "session.py"]],
+      ["reader_bridge", ["__init__.py", "context.py", "codex.py", "dsh.py", "opencode.py", "terminal.py", "clients.py", "service.py"]],
+    ]) {
+      let destination = folder ? PathUtils.join(this.dataDir, folder) : this.dataDir;
+      await IOUtils.makeDirectory(destination, { ignoreExisting: true });
+      for (let name of files) {
+        await IOUtils.writeUTF8(PathUtils.join(destination, name),
+          await this.readBundledPythonFile(folder ? `${folder}/${name}` : name));
+      }
     }
-    await IOUtils.remove(PathUtils.join(this.dataDir, "workspace.py"), { ignoreAbsent: true });
+    for (let [source, folder, files] of [
+      ["agent/dsh", "dsh-bridge", ["package.json", "index.mjs", "client.js", "install.mjs"]],
+      ["agent/opencode", "opencode-bridge", ["package.json", "gui-experimental.cjs"]],
+    ]) {
+      let destination = PathUtils.join(this.dataDir, folder);
+      await IOUtils.makeDirectory(destination, { ignoreExisting: true });
+      for (let name of files) {
+        await IOUtils.writeUTF8(PathUtils.join(destination, name),
+          await Zotero.File.getResourceAsync(this.rootURI + `content/${source}/${name}`));
+      }
+    }
+    // Remove old module files when upgrading to the translation package.
+    for (let name of ["workspace.py", "text_translation.py", "translation.py"]) {
+      await IOUtils.remove(PathUtils.join(this.dataDir, name), { ignoreAbsent: true });
+    }
   },
 
   async isEnvironmentReady() {
