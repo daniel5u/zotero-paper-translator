@@ -23,7 +23,7 @@ import typing
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from translation import RequestOptions, paragraph_messages, request_translation, validate_translation
+from .api import RequestOptions, paragraph_messages, request_translation, validate_translation
 
 SCHEMA = 1
 

@@ -63,7 +63,7 @@ var PaperTranslatorNativeReader = class {
       if (event.key === "Enter") { event.preventDefault(); this.action(() => this.chooseRange()); }
     });
     let rangeRow = this.row(this.node("span", "", plugin.t("pt-reader-pages")), this.range);
-    let choices = this.row();
+    let choices = this.node("div", "pt-native-choices");
     choices.append(this.control(plugin.t("pt-reader-select-main"), () => this.choose("main")),
       this.control(plugin.t("pt-reader-select-all"), () => this.choose("all")),
       this.control(plugin.t("pt-reader-select-none"), () => this.choose("none")));
@@ -80,7 +80,14 @@ var PaperTranslatorNativeReader = class {
       return this.translation.translateSelected();
     }, "pt-native-primary");
     this.retry = this.control(plugin.t("pt-reader-retry-failed"), () => this.translation.retryFailed());
-    this.stop = this.control(plugin.t("pt-reader-stop"), () => this.translation.cancel());
+    this.stop = this.control(plugin.t("pt-reader-stop"), () => this.translation.cancel(), "pt-native-stop");
+    this.agent = this.control(plugin.t("pt-bridge-title"), () => {
+      let attachment = Zotero.Items.get(reader.itemID);
+      if (attachment) {
+        this.hide();
+        plugin.readerBridge.show(attachment);
+      }
+    }, "pt-native-agent");
     this.output = this.node("select");
     this.output.setAttribute("aria-label", plugin.t("pt-reader-output-label"));
     for (let [value, label] of [["dual", "pt-reader-output-dual"], ["mono", "pt-reader-output-mono"], ["both", "pt-reader-output-both"]]) {
@@ -88,8 +95,11 @@ var PaperTranslatorNativeReader = class {
     }
     this.export = this.control(plugin.t("pt-reader-export"), () => this.translation.export({ output: this.output.value, untranslated: "source" }));
     for (let control of [this.translate, this.retry, this.stop, this.export, this.chapter]) control.disabled = true;
-    this.panel.append(rangeRow, choices, this.chapter,
-      this.row(this.translate, this.retry, this.stop), this.row(this.output, this.export));
+    let actions = this.row(this.translate, this.retry, this.stop, this.agent);
+    actions.classList.add("pt-native-actions");
+    let exportRow = this.row(this.output, this.export);
+    exportRow.classList.add("pt-native-export");
+    this.panel.append(rangeRow, this.row(choices, this.chapter), actions, exportRow);
     doc.body.append(this.panel);
     this.outside = (event) => {
       if (!this.panel.contains(event.target) && !this.root.contains(event.target)) this.hide();
@@ -372,7 +382,8 @@ var PaperTranslatorNativeReader = class {
     this.menuVersion++;
     this.panel.hidden = false; this.button.setAttribute("aria-expanded", "true");
     let rect = this.button.getBoundingClientRect();
-    this.panel.style.left = `${Math.max(8, Math.min(rect.left, this.doc.defaultView.innerWidth - 286))}px`;
+    let width = this.panel.getBoundingClientRect().width;
+    this.panel.style.left = `${Math.max(8, Math.min(rect.left, this.doc.defaultView.innerWidth - width - 8))}px`;
     this.panel.style.top = `${rect.bottom + 5}px`;
   }
   hide() { this.panel.hidden = true; this.button.setAttribute("aria-expanded", "false"); }

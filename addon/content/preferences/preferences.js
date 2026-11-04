@@ -4,7 +4,7 @@
 window.MozXULElement.insertFTLIfNeeded("paper-translator.ftl");
 
 // Request fields as sent, so users can match them to their provider's docs.
-// Keys match THINKING_OFF in python/translation.py
+// Keys match THINKING_OFF in python/translation/api.py
 var PT_THINKING_FIELDS = {
   thinking: ['thinking {"type": "disabled"}', "DeepSeek, GLM"],
   reasoning_effort: ['reasoning_effort "minimal"', "OpenAI"],

@@ -20,6 +20,7 @@
 - 悬停在可翻译段落时会显示淡色背景。在原文段落上右键 →「翻译此段」。结果排版后写入右侧对应位置，已有译文可右键重新翻译。为了提高翻译质量，段落的翻译请求会包含论文标题、当前章节和前后段落的一定上下文。
 - 批量翻译：Zotero → 工具 →「论文翻译…」打开翻译队列。点「添加论文…」从文献库中挑选（可搜索、按文库/分类筛选、按添加时间/标题/作者/年份排序），并选择翻译「正文」（默认）或「全部」；也可以在条目上右键 →「添加到翻译队列」。队列一次翻译一篇，窗口里显示每篇的进度、已用 token 和预计剩余时间，可暂停、跳过、重试。关闭 Zotero 后再打开时会询问是否继续未完成的队列。
 - 条目列表可以显示「翻译」列（在列标题上右键勾选），显示排队状态或每篇论文已翻译的比例。
+- 论文讨论：在文本翻译标签页中打开「文本翻译」下拉框 →「前往 Agent 中讨论」。插件把 PDF、元数据和已有网页快照的文件路径交给 Agent，由其自行读取。对话 ID 按论文和客户端保存在本机，下次可「打开已有对话」，也可另建对话。目前支持 Codex Desktop、Codex CLI、DeepSeek Harness Desktop、OpenCode Desktop 或 OpenCode CLI。
 
 ## 设置说明
 
@@ -55,11 +56,18 @@
   ```
   addon/                 插件本体（打包进 xpi）
     bootstrap.js         Zotero 插件入口
-    content/             主逻辑、设置页
+    content/paper-translator.js  插件协调与运行环境
+    content/reader/      原生阅读器交互、文本翻译控制器
+    content/queue/       批量任务与队列窗口
+    content/preferences/ 设置页
+    content/agent/       论文讨论窗口与统一客户端桥接
+      dsh/              Harness Desktop 插件
+      opencode/         OpenCode Desktop 插件
     locale/              中英文文案（Fluent）
     python/runner.py     插件与 BabelDOC 之间的桥
-    python/text_translation.py  持久化结构、段落任务、双栏阅读 PDF 和导出
-    python/translation.py 空响应/截断检查、重试与前后文提示词
+    python/translation/session.py  持久化结构、段落任务、双栏阅读 PDF 和导出
+    python/translation/api.py 空响应/截断检查、重试与前后文提示词
+    python/reader_bridge/ 论文资料与各 Agent 客户端适配
     python/requirements.lock
   python/requirements.in 依赖清单的来源
   scripts/build.sh       打包成 build/paper-translator-<版本>.xpi

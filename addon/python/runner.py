@@ -51,7 +51,7 @@ def verify():
     import onnxruntime
     import openai
     import pymupdf
-    import text_translation
+    import translation.session
 
     emit("done")
 
@@ -78,7 +78,7 @@ def ping(job):
     import openai
 
     try:
-        from translation import RequestOptions, request_translation
+        from translation.api import RequestOptions, request_translation
         options = RequestOptions(job)
         with openai.OpenAI(base_url=job["base_url"], api_key=job["api_key"], timeout=60, max_retries=0) as client:
             request_translation(client, job, [{"role": "user", "content": "Translate to Chinese: Hello"}],
@@ -105,8 +105,18 @@ def main():
             warmup()
         elif command == "ping":
             emit("done", detected=ping(json.loads(sys.stdin.read())))
+        elif command == "bridge-setup-opencode":
+            from reader_bridge.opencode import install_desktop_bridge
+            emit("done", **install_desktop_bridge(json.loads(sys.stdin.read())))
+        elif command == "bridge-setup-dsh":
+            from reader_bridge.dsh import install_desktop_bridge
+            emit("done", **install_desktop_bridge(json.loads(sys.stdin.read())))
+        elif command in {"bridge-create", "bridge-open", "bridge-open-cli"}:
+            from reader_bridge.service import create, open_client
+            handler = create if command == "bridge-create" else open_client
+            handler(json.loads(sys.stdin.read()), emit)
         elif command.startswith("session-"):
-            from text_translation import run
+            from translation.session import run
             run(command, json.loads(sys.stdin.read()), emit)
         else:
             emit("error", message=f"unknown command: {command!r}")
