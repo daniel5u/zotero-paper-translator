@@ -99,6 +99,8 @@ paper-translator-menu-queue =
     .label = Paper Translator…
 paper-translator-menu-queue-add =
     .label = Add to Translation Queue
+paper-translator-menu-agent-discuss =
+    .label = { pt-bridge-title }
 
 pt-queue-title = Paper Translator
 pt-queue-add = Add papers…

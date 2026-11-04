@@ -207,6 +207,24 @@ PaperTranslator = {
           this.openQueueWindow();
           this.queue.start();
         },
+      }, {
+        menuType: "menuitem",
+        l10nID: "paper-translator-menu-agent-discuss",
+        onShowing: (event, context) => {
+          context.setVisible(context.items.length === 1 && this.getPDFAttachments(context.items).length > 0);
+        },
+        onCommand: (event, context) => {
+          if (context.items.length !== 1) return;
+          let [attachment] = this.getPDFAttachments(context.items);
+          if (!attachment) return;
+          try {
+            this.readerBridge.show(attachment);
+          }
+          catch (error) {
+            Zotero.logError(error);
+            Zotero.alert(null, this.t("pt-bridge-title"), String(error.message || error));
+          }
+        },
       }],
     });
     let toolsMenuID = Zotero.MenuManager.registerMenu({

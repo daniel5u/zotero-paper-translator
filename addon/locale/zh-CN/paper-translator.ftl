@@ -99,6 +99,8 @@ paper-translator-menu-queue =
     .label = 论文翻译…
 paper-translator-menu-queue-add =
     .label = 添加到翻译队列
+paper-translator-menu-agent-discuss =
+    .label = { pt-bridge-title }
 
 pt-queue-title = 论文翻译
 pt-queue-add = 添加论文…
