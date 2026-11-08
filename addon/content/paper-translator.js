@@ -2,26 +2,31 @@
 
 var { Subprocess } = ChromeUtils.importESModule("resource://gre/modules/Subprocess.sys.mjs");
 
-const PREF_BRANCH = "extensions.paper-translator.";
+var PREF_BRANCH = "extensions.paper-translator.";
 // Must match PROTOCOL_PREFIX in python/runner.py
-const PROTOCOL_PREFIX = "@@PT ";
-const PYTHON_VERSION = "3.12";
+var PROTOCOL_PREFIX = "@@PT ";
+var PYTHON_VERSION = "3.12";
 // uv release downloaded when none is installed; its .sha256 files are checked
-const UV_VERSION = "0.13.6";
-const LOG_LINES_KEPT = 300;
-const OUTPUT_LANGS = ["zh", "zh-TW", "ja", "ko", "en"];
+var UV_VERSION = "0.13.6";
+var LOG_LINES_KEPT = 300;
+var OUTPUT_LANGS = ["zh", "zh-TW", "ja", "ko", "en"];
 // A paper's parse cache is deleted after this long unused; translations stay
-const SESSION_CACHE_DAYS = 7;
+var SESSION_CACHE_DAYS = 7;
 // Cleanup is not urgent, so it waits until Zotero has settled after startup
-const SESSION_CLEANUP_DELAY_MS = 60 * 1000;
+var SESSION_CLEANUP_DELAY_MS = 60 * 1000;
 // Everything in a session folder except the translations and small records
-const SESSION_CACHE_FILES = ["structure", "structure.json", "source.pdf", "original.pdf", "mediabox.json", "output", "working"];
+var SESSION_CACHE_FILES = ["structure", "structure.json", "source.pdf", "original.pdf", "mediabox.json", "output", "working"];
 // Ask about an unfinished batch once the main window has settled
-const QUEUE_RESUME_DELAY_MS = 5 * 1000;
+var QUEUE_RESUME_DELAY_MS = 5 * 1000;
 // Recognizes our own output files so they are never offered for translation
-const OUTPUT_FILE_RE = new RegExp(`\\.(${OUTPUT_LANGS.join("|")})(\\.dual)?\\.pdf$`, "i");
+var OUTPUT_FILE_RE = new RegExp(`\\.(${OUTPUT_LANGS.join("|")})(\\.dual)?\\.pdf$`, "i");
+// Zotero 7 popups standing in for the MenuManager targets of menuDefinitions()
+var LEGACY_MENU_POPUPS = {
+  "main/library/item": "zotero-itemmenu",
+  "main/menubar/tools": "menu_ToolsPopup",
+};
 
-const RUNNER_ERROR_L10N = {
+var RUNNER_ERROR_L10N = {
   auth: "pt-error-auth",
   not_found: "pt-error-not-found",
   connection: "pt-error-connection",
@@ -29,7 +34,7 @@ const RUNNER_ERROR_L10N = {
 };
 
 /** An error whose message is already localized for the user. */
-class UserError extends Error {}
+var UserError = class extends Error {};
 
 PaperTranslator = {
   id: null,
@@ -37,6 +42,8 @@ PaperTranslator = {
   rootURI: null,
   l10n: null,
   menuIDs: [],
+  // Zotero 7 main window -> functions that take its menus out again
+  legacyMenus: new Map(),
   prefPaneID: null,
   setupPromise: null,
   // False once shut down, so a pending session cleanup does nothing
@@ -65,6 +72,12 @@ PaperTranslator = {
     // The preferences pane runs in its own scope and reaches the plugin here
     Zotero.PaperTranslator = this;
     this.migratePrefs();
+    // Registered first so settings stay reachable if a later step fails
+    this.prefPaneID = await Zotero.PreferencePanes.register({
+      pluginID: this.id,
+      src: this.rootURI + "content/preferences.xhtml",
+      scripts: [this.rootURI + "content/preferences.js"],
+    });
     this.nativeCSS = await Zotero.File.getResourceAsync(this.rootURI + "content/native-reader.css");
     try { this.readerRegistry = JSON.parse(await IOUtils.readUTF8(PathUtils.join(this.dataDir, "native-readers.json"))); }
     catch { this.readerRegistry = {}; }
@@ -108,11 +121,6 @@ PaperTranslator = {
       notify: (event, type, ids, extraData) => this.onItemsRemoved(event, ids, extraData)
         .catch((e) => Zotero.logError(e)),
     }, ["item"], "paper-translator");
-    this.prefPaneID = await Zotero.PreferencePanes.register({
-      pluginID: this.id,
-      src: this.rootURI + "content/preferences.xhtml",
-      scripts: [this.rootURI + "content/preferences.js"],
-    });
     for (let win of Zotero.getMainWindows()) {
       this.addToWindow(win);
     }
@@ -166,16 +174,26 @@ PaperTranslator = {
 
   addToWindow(win) {
     win.MozXULElement.insertFTLIfNeeded("paper-translator.ftl");
+    if (!Zotero.MenuManager && !this.legacyMenus.has(win)) this.addLegacyMenus(win);
   },
 
   removeFromWindow(win) {
+    this.removeLegacyMenus(win);
     win.document.querySelector('[href="paper-translator.ftl"]')?.remove();
   },
 
   registerMenus() {
-    let menuID = Zotero.MenuManager.registerMenu({
+    // Zotero 7 has no MenuManager: addToWindow builds the same menus there
+    if (!Zotero.MenuManager) return;
+    this.menuIDs = this.menuDefinitions()
+      .map(def => Zotero.MenuManager.registerMenu({ ...def, pluginID: this.id }))
+      .filter(Boolean);
+  },
+
+  /** Menus in Zotero.MenuManager's format. */
+  menuDefinitions() {
+    return [{
       menuID: "paper-translator-item",
-      pluginID: this.id,
       target: "main/library/item",
       menus: [{
         menuType: "menuitem",
@@ -204,10 +222,8 @@ PaperTranslator = {
           this.queue.start();
         },
       }],
-    });
-    let toolsMenuID = Zotero.MenuManager.registerMenu({
+    }, {
       menuID: "paper-translator-tools",
-      pluginID: this.id,
       target: "main/menubar/tools",
       menus: [{
         menuType: "menuitem",
@@ -215,8 +231,47 @@ PaperTranslator = {
         icon: this.rootURI + "content/icon.svg",
         onCommand: () => this.openQueueWindow(),
       }],
-    });
-    this.menuIDs = [menuID, toolsMenuID].filter(Boolean);
+    }];
+  },
+
+  /** Zotero 7: adds menuDefinitions() to a main window's own popups. */
+  addLegacyMenus(win) {
+    let doc = win.document;
+    let removers = [];
+    for (let def of this.menuDefinitions()) {
+      let popup = doc.getElementById(LEGACY_MENU_POPUPS[def.target]);
+      if (!popup) continue;
+      let entries = def.menus.map((menu) => {
+        let elem = doc.createXULElement("menuitem");
+        doc.l10n.setAttributes(elem, menu.l10nID);
+        if (menu.icon) {
+          elem.classList.add("menuitem-iconic");
+          elem.setAttribute("image", menu.icon);
+        }
+        let context = {
+          get items() { return win.ZoteroPane.getSelectedItems(); },
+          setVisible: (visible) => { elem.hidden = !visible; },
+        };
+        elem.addEventListener("command", event => menu.onCommand(event, context));
+        popup.append(elem);
+        return { menu, context, elem };
+      });
+      let onShowing = (event) => {
+        if (event.target !== popup) return;
+        for (let { menu, context } of entries) menu.onShowing?.(event, context);
+      };
+      popup.addEventListener("popupshowing", onShowing);
+      removers.push(() => {
+        popup.removeEventListener("popupshowing", onShowing);
+        for (let { elem } of entries) elem.remove();
+      });
+    }
+    this.legacyMenus.set(win, removers);
+  },
+
+  removeLegacyMenus(win) {
+    for (let remove of this.legacyMenus.get(win) || []) remove();
+    this.legacyMenus.delete(win);
   },
 
   openQueueWindow() {

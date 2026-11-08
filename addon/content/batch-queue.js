@@ -2,12 +2,12 @@
 
 // Entry states. "parsing" and "translating" only exist while a paper is being
 // worked on; a saved queue turns them back into "queued".
-const ACTIVE_STATES = ["parsing", "translating"];
-const FINISHED_STATES = ["done", "skipped", "failed"];
+var ACTIVE_STATES = ["parsing", "translating"];
+var FINISHED_STATES = ["done", "skipped", "failed"];
 // Queue window and status column redraws are coalesced to this interval
-const QUEUE_NOTIFY_MS = 250;
+var QUEUE_NOTIFY_MS = 250;
 // Assumed parse time for an unparsed paper until one has been measured
-const DEFAULT_PARSE_SECONDS = 70;
+var DEFAULT_PARSE_SECONDS = 70;
 
 /**
  * Translates papers one after another, in the background, without opening

@@ -11,6 +11,8 @@ async function startup({ id, version, rootURI }) {
   chromeHandle = aomStartup.registerChrome(Services.io.newURI(rootURI + "manifest.json"), [
     ["content", "paper-translator", "content/"],
   ]);
+  // Zotero keeps this scope when the plugin is disabled and enabled again, so
+  // these scripts can run twice in it: their top-level names use var, not const
   Services.scriptloader.loadSubScript(rootURI + "content/native-reader.js");
   Services.scriptloader.loadSubScript(rootURI + "content/text-translation-controller.js");
   Services.scriptloader.loadSubScript(rootURI + "content/batch-queue.js");

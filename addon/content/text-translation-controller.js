@@ -1,5 +1,14 @@
 /* global Zotero, IOUtils, PathUtils, Components, PaperTranslatorTextTranslation, PaperTranslatorNativeReader */
 
+/**
+ * Zotero 7 readers have no _isTabClosed, but leave Zotero.Reader's list when closed.
+ * Check the list first: there, reading a property a reader lacks goes on to its
+ * internal reader, which throws once the tab is closed.
+ */
+function readerIsOpen(reader) {
+  return Zotero.Reader._readers.includes(reader) && !reader._isTabClosed && !reader._isUninitialized;
+}
+
 var PaperTranslatorTextTranslation = class {
   constructor(plugin, attachment, onClose, lang) {
     this.plugin = plugin;
@@ -252,7 +261,7 @@ var PaperTranslatorTextTranslation = class {
     if (copied && this.currentGeneration !== null) {
       let bytes = await IOUtils.read(target);
       for (let reader of this.readers) {
-        if (!reader || reader._isUninitialized || reader._isTabClosed || !reader._internalReader) continue;
+        if (!reader || !readerIsOpen(reader) || !reader._internalReader) continue;
         let internal = reader._internalReader;
         // Keep the native toolbar, annotation manager, zoom and view state.
         // Only the PDF views reload, with bytes to bypass the attachment URL's
@@ -311,9 +320,10 @@ var PaperTranslatorTextTranslation = class {
       let title = parent?.getField("title") || this.attachment.getField("title")
         || this.attachment.attachmentFilename;
       reader._title = this.plugin.t("pt-text-translation-tab-title", { title });
-      if (reader._isTabClosed) return;
+      if (!readerIsOpen(reader)) return;
       reader._setTitleValue(reader._title);
-      reader._internalReader?.setTitle(reader._title);
+      // Zotero 7's reader has no setTitle
+      reader._internalReader?.setTitle?.(reader._title);
     };
     reader.updateTitle().catch(error => Zotero.logError(error));
   }
@@ -455,7 +465,7 @@ var PaperTranslatorTextTranslation = class {
     this.proc?.kill();
     for (let [reader, updateTitle] of this.readerTitleHandlers) {
       reader.updateTitle = updateTitle;
-      if (!reader._isTabClosed && !reader._isUninitialized) {
+      if (readerIsOpen(reader)) {
         Promise.resolve(reader.updateTitle()).catch(error => Zotero.logError(error));
       }
     }

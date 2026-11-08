@@ -2,7 +2,7 @@
 
 一个在原生 PDF 阅读器中选择页面或段落进行文本翻译的 Zotero 插件。
 
-这个插件能保留原有版式、公式和图表，只要你有自己的 OpenAI 兼容 API。目前支持 Zotero 7 – 10（在 Zotero 10.0.6 / macOS & ArchLinux 上测试）。
+这个插件能保留原有版式、公式和图表，只要你有自己的 OpenAI 兼容 API。目前支持 Zotero 7 – 10（在 Zotero 7.0.32 / macOS、Zotero 10.0.7 / macOS 和 Zotero 10.0.6 / ArchLinux 上测试）。
 
 ## 安装
 
