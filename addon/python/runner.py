@@ -6,6 +6,8 @@ Usage:
     python runner.py warmup     download BabelDOC models, fonts and cmaps if missing
     python runner.py ping       read a JSON job from stdin and test the API settings
     python runner.py session-* read a JSON job from stdin and run a text translation task
+    python runner.py serve [auto|gpu|cpu] serve requests with cached imports and a layout model
+    python runner.py gpu-setup prepare the optional CUDA runtime
 
 Every message meant for the plugin is one line on stdout prefixed with
 PROTOCOL_PREFIX and followed by a JSON object. Anything else on stdout or
@@ -94,10 +96,45 @@ def ping(job):
         raise ApiCheckError("api", str(e)) from e
 
 
+def serve(device):
+    from gpu_runtime import activate
+    activate(device)
+    import text_translation
+    from layout_model import prepare
+
+    for line in sys.stdin:
+        request_id = None
+        try:
+            request = json.loads(line)
+            request_id = request["id"]
+            def reply(kind, **fields):
+                emit(kind, request_id=request_id, **fields)
+            if request["command"] == "prepare":
+                reply("parser_device", **prepare(device))
+                reply("done")
+            else:
+                job = request["job"]
+                job["parse_device"] = device
+                text_translation.run(request["command"], job, reply)
+            emit("request_end", request_id=request_id, exit_code=0)
+        except Exception as error:
+            traceback.print_exc()
+            emit("error", request_id=request_id, message=f"{type(error).__name__}: {error}")
+            emit("request_end", request_id=request_id, exit_code=1)
+
+
 def main():
     command = sys.argv[1] if len(sys.argv) > 1 else ""
     try:
-        if command == "check":
+        if command == "serve":
+            device = sys.argv[2] if len(sys.argv) > 2 else "auto"
+            if device not in {"auto", "gpu", "cpu"}:
+                raise ValueError("Invalid parser device.")
+            serve(device)
+        elif command == "gpu-setup":
+            from gpu_runtime import setup
+            emit("done", **setup(json.loads(sys.stdin.read())["uv"], emit))
+        elif command == "check":
             check()
         elif command == "verify":
             verify()

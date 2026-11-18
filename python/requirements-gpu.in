@@ -1,0 +1,2 @@
+# Optional CUDA runtime, installed separately from the CPU environment.
+onnxruntime-gpu[cuda,cudnn]==1.31.1

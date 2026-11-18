@@ -190,3 +190,15 @@ pt-pref-automatic-detected = Automatic · detected: { $value }
 pt-pref-automatic-pending = Automatic · not detected yet
 pt-pref-request-reset = Reset to automatic
 pt-pref-request-note = Detection never changes options you set yourself.
+
+pt-pref-parse-device = Parsing device
+pt-pref-parse-device-auto = Automatic (prefer GPU)
+pt-pref-parse-device-gpu = GPU (fall back to CPU)
+pt-pref-parse-device-cpu = CPU
+pt-parser-idle = The parsing model will prepare in the background after environment setup.
+pt-parser-preparing = Preparing the parsing model in the background…
+pt-stage-prepare-gpu = Preparing the GPU runtime…
+pt-parser-ready-gpu = Ready · GPU ({ $provider })
+pt-parser-ready-cpu = Ready · CPU
+pt-parser-fallback-cpu = GPU unavailable. Using CPU.
+pt-parser-error = Could not prepare the parsing model: { $detail }

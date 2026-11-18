@@ -23,6 +23,8 @@
 
 ## 设置说明
 
+环境设置中的「解析设备」可选自动、GPU 或 CPU。自动模式优先使用可用的 GPU；GPU 初始化或推理失败时回退到 CPU。Windows / Linux 的 NVIDIA 加速需要支持 CUDA 13 的驱动（580 或更新），首次准备会自动安装独立的 GPU 运行环境；macOS 使用 BabelDOC 支持的 CoreML。环境就绪后，插件会在 Zotero 启动完成后后台导入依赖、加载模型，并在同一个 Python 进程中复用，准备期间可以继续阅读。
+
 常用设置只有 API 地址、API Key、模型和目标语言。其余选项收在「高级」里，默认全部自动：
 
 | 设置 | 说明 |
@@ -45,6 +47,7 @@
 
 - 环境放在 `<Zotero 数据目录>/paper-translator/venv`，按插件自带的 `addon/python/requirements.lock` 精确安装。插件更新带来新的依赖清单时会自动重新同步。
 - PDF 解析与翻译分离，段落结果逐个保存，全部排版后统一更新阅读器；API 连接测试由设置页单独触发。
+- PDF 解析、排版和导出复用常驻 Python 进程，网络翻译另启进程。切换解析设备会在当前任务完成后重建常驻进程；退出或停用插件时结束进程。
 - 阅读器里的双栏 PDF 本身就是已完成页面的存储：只重绘译文有变化的页面，没有新译文时重新打开不会改动这个文件。排版中间文件在每次运行结束后删除。
 - 解析结果（版面结构、原文快照）7 天未使用会自动清理，需要时重新解析；译文保存在 `session.json` 中长期保留，重新解析后按段落自动接回。附件被删除后，对应的会话目录也会被清理。
 
@@ -60,8 +63,12 @@
     python/runner.py     插件与 BabelDOC 之间的桥
     python/text_translation.py  持久化结构、段落任务、双栏阅读 PDF 和导出
     python/translation.py 空响应/截断检查、重试与前后文提示词
+    python/layout_model.py 缓存版面模型、选择 GPU 或 CPU
+    python/gpu_runtime.py 检测并安装隔离的 CUDA 运行环境
     python/requirements.lock
+    python/requirements-gpu.lock
   python/requirements.in 依赖清单的来源
+  python/requirements-gpu.in 可选 GPU 依赖清单的来源
   scripts/build.sh       打包成 build/paper-translator-<版本>.xpi
   scripts/generate_update.py 从发布的 XPI 生成自动更新清单
   ```
@@ -75,6 +82,12 @@
   ```
 
   > 注意：BabelDOC 0.6.4 和 bitstring 5.0 不兼容，必须保留 `bitstring<5`。
+
+  更新可选 GPU 依赖时，修改 `python/requirements-gpu.in`，再运行：
+
+  ```bash
+  uv pip compile python/requirements-gpu.in --constraint addon/python/requirements.lock --python-version 3.12 --universal --no-header --no-annotate -o addon/python/requirements-gpu.lock
+  ```
 - 开发时可以在 Zotero 配置目录的 `extensions/` 里放一个以插件 ID（`paper-translator@danielsu.local`）命名的文件，内容是 `addon/` 目录的绝对路径，Zotero 就会直接从源码加载插件。发布前务必再用打包好的 xpi 安装测试一次：两种方式下插件读取自身文件的地址不同（`file://` 和 `jar:`）。
 
 ## 协议

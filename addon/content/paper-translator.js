@@ -1,4 +1,4 @@
-/* global Zotero, Services, ChromeUtils, IOUtils, PathUtils, Localization, PaperTranslatorQueue, PaperTranslatorTextTranslation, PaperTranslatorNativeReader */
+/* global Zotero, Services, ChromeUtils, IOUtils, PathUtils, Localization, PaperTranslatorQueue, PaperTranslatorTextTranslation, PaperTranslatorNativeReader, PaperTranslatorParserWorker */
 
 var { Subprocess } = ChromeUtils.importESModule("resource://gre/modules/Subprocess.sys.mjs");
 
@@ -46,6 +46,8 @@ PaperTranslator = {
   legacyMenus: new Map(),
   prefPaneID: null,
   setupPromise: null,
+  parserWorker: null,
+  parserStatus: { state: "idle" },
   // False once shut down, so a pending session cleanup does nothing
   active: false,
   queue: null,
@@ -125,6 +127,8 @@ PaperTranslator = {
       this.addToWindow(win);
     }
     this.active = true;
+    this.parserWorker = new PaperTranslatorParserWorker(this);
+    this.prewarmParser();
     await this.loadStatusCache();
     this.columnKey = await Zotero.ItemTreeManager.registerColumn({
       dataKey: "translation",
@@ -145,6 +149,7 @@ PaperTranslator = {
 
   shutdown() {
     this.active = false;
+    this.parserWorker?.shutdown();
     this.queue?.shutdown();
     if (this.queueWindow && !this.queueWindow.closed) {
       this.queueWindow.close();
@@ -510,11 +515,37 @@ PaperTranslator = {
 
   async installPythonFiles() {
     await IOUtils.makeDirectory(this.dataDir, { ignoreExisting: true });
-    for (let name of ["runner.py", "text_translation.py", "translation.py", "requirements.lock"]) {
+    for (let name of ["runner.py", "text_translation.py", "translation.py", "layout_model.py", "gpu_runtime.py", "requirements.lock", "requirements-gpu.lock"]) {
       let text = await this.readBundledPythonFile(name);
       await IOUtils.writeUTF8(PathUtils.join(this.dataDir, name), text);
     }
     await IOUtils.remove(PathUtils.join(this.dataDir, "workspace.py"), { ignoreAbsent: true });
+  },
+
+  async prewarmParser() {
+    try {
+      await Zotero.initializationPromise;
+      if (!this.active || !await this.isEnvironmentReady()) return;
+      await this.installPythonFiles();
+      if (!this.active) return;
+      let outcome = await this.parserWorker.run("prepare");
+      if (outcome.exitCode !== 0) throw new Error(outcome.result?.message || outcome.log.slice(-3).join("\n"));
+    }
+    catch (error) {
+      if (this.active) {
+        this.parserStatus = { state: "error", message: String(error.message || error) };
+        Zotero.logError(error);
+      }
+    }
+  },
+
+  runSession(command, job, options) {
+    if (["session-parse", "session-reader", "session-export", "session-edit"].includes(command)) {
+      return this.parserWorker.run(command, job, options);
+    }
+    return this.run(this.venvPython, [this.runnerPath, command], {
+      ...options, input: JSON.stringify(job),
+    });
   },
 
   async isEnvironmentReady() {
@@ -578,6 +609,7 @@ PaperTranslator = {
     if (!repair && (await this.isEnvironmentReady())) {
       return;
     }
+    await this.parserWorker?.reset();
     let report = (step, state, detail = "", fraction = null) => {
       onStatus(this.t(`pt-setup-step-${step}`), { step, state, detail, fraction });
     };
@@ -640,6 +672,7 @@ PaperTranslator = {
     }
     await mustSucceed("warmup", await runStep("warmup", this.venvPython, [this.runnerPath, "warmup"]));
     await IOUtils.copy(this.lockPath, this.installedLockPath);
+    this.prewarmParser();
   },
 
   /**

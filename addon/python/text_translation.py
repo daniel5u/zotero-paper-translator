@@ -249,9 +249,11 @@ def display_box(page, paragraph):
 
 
 def parse_session(job, emit):
+    from gpu_runtime import activate
+    activate(job.get("parse_device", "auto"))
     import pymupdf
     import babeldoc.format.pdf.high_level as hl
-    from babeldoc.docvision.doclayout import DocLayoutModel
+    from layout_model import load_model, model_info
     from babeldoc.format.pdf.document_il.midend.layout_parser import LayoutParser
     from babeldoc.format.pdf.document_il.midend.paragraph_finder import ParagraphFinder
     from babeldoc.format.pdf.document_il.midend.styles_and_formulas import StylesAndFormulas
@@ -263,7 +265,8 @@ def parse_session(job, emit):
         return
     emit("progress", stage="Parsing PDF structure", stage_id="pt-stage-parse-structure", overall=5)
     hl.init()
-    model = DocLayoutModel.load_onnx()
+    model = load_model(job.get("parse_device", "auto"))
+    emit("parser_device", **model_info(model))
     config = make_config(folder, job, model)
     getattr(model, "init_font_mapper", lambda _: None)(config)
     source = folder / "source.pdf"
@@ -286,6 +289,7 @@ def parse_session(job, emit):
         docs = parse_prepared_pdf_with_new_parser_to_legacy_ir(source, config=config, doc_pdf=pdf)
         emit("progress", stage="Detecting text, tables and figures", stage_id="pt-stage-detect-layout", overall=35)
         docs = LayoutParser(config).process(docs, pdf)
+        emit("parser_device", **model_info(model))
         emit("progress", stage="Grouping paragraphs and preserving formulas", stage_id="pt-stage-prepare-paragraphs", overall=65)
         ParagraphFinder(config).process(docs)
         StylesAndFormulas(config).process(docs)

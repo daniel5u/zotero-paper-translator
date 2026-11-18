@@ -35,6 +35,17 @@
       <html:label for="pt-uv-path" data-l10n-id="pt-pref-uv-path"/>
       <html:input id="pt-uv-path" type="text" data-l10n-id="pt-pref-uv-path-input" preference="extensions.paper-translator.uvPath"/>
     </html:div>
+    <html:div class="pt-row">
+      <html:label for="pt-parse-device" data-l10n-id="pt-pref-parse-device"/>
+      <html:div>
+        <html:select id="pt-parse-device" preference="extensions.paper-translator.parseDevice">
+          <html:option value="auto" data-l10n-id="pt-pref-parse-device-auto"/>
+          <html:option value="gpu" data-l10n-id="pt-pref-parse-device-gpu"/>
+          <html:option value="cpu" data-l10n-id="pt-pref-parse-device-cpu"/>
+        </html:select>
+        <html:div id="pt-parser-status" class="pt-status" role="status"/>
+      </html:div>
+    </html:div>
     <html:div class="pt-actions">
       <html:button id="pt-env-setup"/>
       <html:button id="pt-env-open" data-l10n-id="pt-pref-env-open"/>

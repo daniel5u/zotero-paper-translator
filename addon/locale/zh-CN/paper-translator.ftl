@@ -187,3 +187,15 @@ pt-pref-automatic-detected = 自动 · 已检测：{ $value }
 pt-pref-automatic-pending = 自动 · 尚未检测
 pt-pref-request-reset = 恢复自动
 pt-pref-request-note = 检测不会更改你手动设置的选项。
+
+pt-pref-parse-device = 解析设备
+pt-pref-parse-device-auto = 自动（优先 GPU）
+pt-pref-parse-device-gpu = GPU（不可用时使用 CPU）
+pt-pref-parse-device-cpu = CPU
+pt-parser-idle = 初始化环境后，会在后台准备解析模型。
+pt-parser-preparing = 正在后台准备解析模型…
+pt-stage-prepare-gpu = 正在准备 GPU 运行环境…
+pt-parser-ready-gpu = 已就绪 · GPU（{ $provider }）
+pt-parser-ready-cpu = 已就绪 · CPU
+pt-parser-fallback-cpu = GPU 不可用，已使用 CPU。
+pt-parser-error = 解析模型准备失败：{ $detail }

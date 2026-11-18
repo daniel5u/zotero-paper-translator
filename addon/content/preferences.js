@@ -41,6 +41,14 @@ var PaperTranslatorPrefs = {
     for (let id of ["pt-base-url", "pt-model"]) {
       this.$(id).addEventListener("change", () => this.renderRequestOptions());
     }
+    this.$("pt-parse-device").addEventListener("change", () => {
+      this.plugin.setPref("parseDevice", this.$("pt-parse-device").value);
+      this.plugin.prewarmParser();
+      this.refreshParserStatus();
+    });
+    this.parserStatusTimer = window.setInterval(() => this.refreshParserStatus(), 1000);
+    window.addEventListener("unload", () => window.clearInterval(this.parserStatusTimer), { once: true });
+    this.refreshParserStatus();
     this.initRequestOptions();
     this.refreshEnvironmentStatus();
   },
@@ -50,6 +58,18 @@ var PaperTranslatorPrefs = {
     elem.textContent = text;
     elem.classList.toggle("error", kind === "error");
     elem.classList.toggle("ok", kind === "ok");
+  },
+
+  refreshParserStatus() {
+    let status = this.plugin.parserStatus;
+    let key = status.state === "ready" ? (status.device === "gpu" ? "pt-parser-ready-gpu" : "pt-parser-ready-cpu")
+      : status.state === "preparing" ? (status.stage || "pt-parser-preparing")
+      : status.state === "error" ? "pt-parser-error" : "pt-parser-idle";
+    let text = this.plugin.t(key, { provider: status.provider || "", detail: status.message || "" });
+    if (status.state === "ready" && status.device === "cpu" && this.plugin.getPref("parseDevice") === "gpu") {
+      text = this.plugin.t("pt-parser-fallback-cpu");
+    }
+    this.setStatus("pt-parser-status", text, status.state === "error" ? "error" : "");
   },
 
   // Environment

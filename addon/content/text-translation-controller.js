@@ -192,13 +192,10 @@ var PaperTranslatorTextTranslation = class {
         qps: settings.qps, custom_prompt: settings.customPrompt,
         session_dir: this.folder, ...(cancelFile ? { cancel_file: cancelFile } : {}),
         ...await this.readerBase(), ...fields };
-      let { exitCode, result, log } = await this.plugin.run(
-        this.plugin.venvPython, [this.plugin.runnerPath, command], {
-          input: JSON.stringify(job),
-          onSpawn: proc => { this.proc = proc; },
-          onMessage: message => this.accept(message),
-        }
-      );
+      let { exitCode, result, log } = await this.plugin.runSession(command, job, {
+        onSpawn: proc => { this.proc = proc; },
+        onMessage: message => this.accept(message),
+      });
       if (exitCode !== 0 || result?.type === "error") {
         let path = await this.plugin.saveLog("reader", log);
         let detail = result?.message || this.plugin.t("pt-error-process-exit", { code: exitCode });
