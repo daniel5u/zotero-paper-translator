@@ -1,4 +1,5 @@
-.pt-native-toolbar { display:inline-flex; align-items:center; }
+/* A block flex container keeps Zotero's section line box independent of the progress baseline. */
+.pt-native-toolbar { display:flex; align-items:center; flex-shrink:0; height:28px; }
 .pt-native-progress-group { display:inline-flex; flex-direction:column; justify-content:center; gap:3px; flex-shrink:0; width:104px; max-width:14vw; height:24px; margin-inline-end:8px; }
 .pt-native-progress-group[hidden] { display:none; }
 .pt-native-progress { appearance:none; flex-shrink:0; width:100%; height:4px; margin:0; border:0; border-radius:3px; overflow:hidden; background:var(--fill-quinary, #ddd); color:var(--accent-blue, #4080dc); }
@@ -8,7 +9,7 @@
 .pt-native-progress:indeterminate { opacity:.65; }
 .pt-paragraph-hover { position:absolute; z-index:2; border-radius:2px; background:rgba(95, 150, 220, .11); pointer-events:none; user-select:none; }
 .pt-paragraph-hover[hidden] { display:none; }
-.paper-translator-text-translation-button { font:inherit; color:var(--fill-primary, #222); white-space:nowrap; padding:3px 7px; border:1px solid transparent; border-radius:3px; background:transparent; cursor:pointer; }
+.paper-translator-text-translation-button { display:inline-flex; align-items:center; box-sizing:border-box; height:28px; font:inherit; color:var(--fill-primary, #222); white-space:nowrap; padding:3px 7px; border:1px solid transparent; border-radius:3px; background:transparent; cursor:pointer; }
 .paper-translator-text-translation-button:hover { background:var(--fill-quinary, #e6e6e6); }
 .pt-native-menu { position:fixed; z-index:10000; width:274px; padding:10px; border:1px solid var(--fill-tertiary, #ccc); border-radius:5px; background:var(--material-background, #f7f7f7); color:var(--fill-primary, #222); box-shadow:0 3px 14px #0002; font:12px/1.5 system-ui,sans-serif; }
 .pt-native-menu[hidden] { display:none; }
@@ -16,13 +17,21 @@
 .pt-native-row>input,.pt-native-row>select { flex:1; min-width:0; }
 .pt-native-row>span { flex-shrink:0; }
 .pt-native-menu button,.pt-native-menu input,.pt-native-menu select { font:inherit; color:inherit; border:1px solid var(--fill-tertiary, #ccc); border-radius:3px; padding:4px 7px; background:var(--material-background, #fff); }
-.pt-native-menu button { cursor:pointer; }
+.pt-native-menu button { appearance:none; cursor:pointer; }
+.pt-native-menu button:not(:disabled):hover { background:var(--fill-quinary, #e6e6e6); }
 .pt-native-menu button:disabled { opacity:.4; cursor:default; }
+.pt-native-selection button { background:transparent; border-color:transparent; }
+.pt-native-menu .pt-native-primary { font-weight:600; color:var(--accent-white, #fff); background:var(--accent-blue, #4080dc); border-color:transparent; }
+.pt-native-menu .pt-native-primary:not(:disabled):hover { background:color-mix(in srgb, var(--accent-blue, #4080dc) 90%, #000); }
+.pt-native-menu .pt-native-secondary { color:color-mix(in srgb, var(--accent-blue, #4080dc) 75%, var(--fill-primary, #222)); background:var(--accent-blue10, #4080dc1a); border-color:var(--accent-blue30, #4080dc4d); }
+.pt-native-menu .pt-native-secondary:not(:disabled):hover { background:var(--accent-blue30, #4080dc4d); }
+.pt-native-stop:not(:disabled) { color:color-mix(in srgb, var(--accent-red, #ad3c36) 75%, var(--fill-primary, #222)); }
+.pt-native-menu .pt-native-stop:not(:disabled):hover { background:color-mix(in srgb, var(--accent-red, #ad3c36) 10%, transparent); }
+.pt-native-actions,.pt-native-export { border-top:1px solid var(--fill-quinary, #ddd); padding-top:8px; }
 .pt-native-menu input { width:100%; }
 .pt-native-menu>select { margin-top:7px; width:100%; }
 .pt-native-status { color:var(--fill-secondary, #666); font:10px/12px system-ui,sans-serif; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:start; }
 .pt-native-status.pt-native-error { color:var(--accent-red, #ad3c36); }
-.pt-native-primary { font-weight:600!important; }
 /* Keep custom reader controls outside Zotero's window drag region. */
 .pt-native-toolbar,
 .paper-translator-text-translation-button {
