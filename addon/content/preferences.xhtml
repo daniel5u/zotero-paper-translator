@@ -25,6 +25,21 @@
     .paper-translator-pane summary { font-weight: 600; cursor: default; }
     .paper-translator-pane h3 { margin: 1.2em 0 0.4em; font-size: 1em; }
     .paper-translator-pane #pt-max-tokens { width: 7em; }
+    .paper-translator-pane .pt-row.pt-top { align-items: start; }
+    .paper-translator-pane .pt-row.pt-top > label { padding-top: 0.3em; }
+    .paper-translator-pane .pt-hw { display: flex; flex-direction: column; gap: 0.15em; padding-top: 0.3em; }
+    .paper-translator-pane .pt-dot { display: inline-block; width: 0.6em; height: 0.6em; border-radius: 50%; margin-inline-end: 0.45em; background: var(--fill-tertiary); }
+    .paper-translator-pane .pt-dot.ok { background: var(--accent-green); }
+    .paper-translator-pane .pt-dot.warn { background: var(--accent-orange, #c77c02); }
+    .paper-translator-pane .pt-dot.error { background: var(--accent-red); }
+    .paper-translator-pane #pt-device-hint { margin-top: 0.25em; }
+    .paper-translator-pane .pt-card { margin-top: 0.5em; padding: 0.7em 0.9em; border: 1px solid var(--fill-quinary); border-radius: 6px; background: var(--material-sidepane, transparent); }
+    .paper-translator-pane .pt-card-title { font-weight: 600; margin-bottom: 0.2em; }
+    .paper-translator-pane .pt-kv { display: grid; grid-template-columns: max-content 1fr; gap: 0.1em 1em; margin-top: 0.4em; }
+    .paper-translator-pane .pt-kv > :nth-child(odd) { color: var(--fill-secondary); }
+    .paper-translator-pane .pt-kv > :nth-child(even) { overflow-wrap: anywhere; }
+    .paper-translator-pane #pt-gpu-progress { width: 100%; margin-top: 0.5em; }
+    .paper-translator-pane .pt-card-actions { display: flex; flex-wrap: wrap; gap: 0.5em; margin-top: 0.6em; }
   </html:style>
 
   <html:div class="pt-section">
@@ -35,20 +50,56 @@
       <html:label for="pt-uv-path" data-l10n-id="pt-pref-uv-path"/>
       <html:input id="pt-uv-path" type="text" data-l10n-id="pt-pref-uv-path-input" preference="extensions.paper-translator.uvPath"/>
     </html:div>
-    <html:div class="pt-row">
-      <html:label for="pt-parse-device" data-l10n-id="pt-pref-parse-device"/>
-      <html:div>
-        <html:select id="pt-parse-device" preference="extensions.paper-translator.parseDevice">
-          <html:option value="auto" data-l10n-id="pt-pref-parse-device-auto"/>
-          <html:option value="gpu" data-l10n-id="pt-pref-parse-device-gpu"/>
-          <html:option value="cpu" data-l10n-id="pt-pref-parse-device-cpu"/>
-        </html:select>
-        <html:div id="pt-parser-status" class="pt-status" role="status"/>
-      </html:div>
-    </html:div>
     <html:div class="pt-actions">
       <html:button id="pt-env-setup"/>
       <html:button id="pt-env-open" data-l10n-id="pt-pref-env-open"/>
+    </html:div>
+  </html:div>
+
+  <html:div class="pt-section">
+    <html:h2 data-l10n-id="pt-pref-accel-heading"/>
+    <html:div class="pt-row pt-top">
+      <html:label data-l10n-id="pt-pref-hardware"/>
+      <html:div id="pt-hardware" class="pt-hw"/>
+    </html:div>
+    <html:div class="pt-row pt-top">
+      <html:label for="pt-parse-device" data-l10n-id="pt-pref-parse-device"/>
+      <html:div>
+        <html:select id="pt-parse-device"/>
+        <html:div id="pt-device-hint" class="pt-status"/>
+        <html:div id="pt-gpu-card" class="pt-card" role="status" hidden="hidden">
+          <html:div id="pt-gpu-title" class="pt-card-title"/>
+          <html:div id="pt-gpu-body" class="pt-status"/>
+          <html:div id="pt-gpu-details" class="pt-kv"/>
+          <html:progress id="pt-gpu-progress" hidden="hidden"/>
+          <html:div id="pt-gpu-actions" class="pt-card-actions">
+            <html:button id="pt-gpu-download" data-l10n-id="pt-gpu-download"/>
+            <html:button id="pt-gpu-cancel" data-l10n-id="pt-gpu-cancel"/>
+            <html:button id="pt-gpu-recheck" data-l10n-id="pt-gpu-recheck"/>
+            <html:button id="pt-gpu-remove" data-l10n-id="pt-gpu-remove"/>
+          </html:div>
+        </html:div>
+      </html:div>
+    </html:div>
+    <html:div class="pt-row pt-top">
+      <html:label for="pt-parser-idle" data-l10n-id="pt-pref-parser-idle"/>
+      <html:div>
+        <html:select id="pt-parser-idle">
+          <html:option value="1" data-l10n-id="pt-pref-parser-idle-1"/>
+          <html:option value="5" data-l10n-id="pt-pref-parser-idle-5"/>
+          <html:option value="15" data-l10n-id="pt-pref-parser-idle-15"/>
+          <html:option value="30" data-l10n-id="pt-pref-parser-idle-30"/>
+          <html:option value="0" data-l10n-id="pt-pref-parser-idle-never"/>
+        </html:select>
+        <html:div id="pt-idle-hint" class="pt-status"/>
+      </html:div>
+    </html:div>
+    <html:div class="pt-row">
+      <html:label data-l10n-id="pt-pref-parser-status"/>
+      <html:div class="pt-inline">
+        <html:span id="pt-parser-status" class="pt-status" role="status"/>
+        <html:button id="pt-parser-unload" data-l10n-id="pt-pref-parser-unload"/>
+      </html:div>
     </html:div>
   </html:div>
 

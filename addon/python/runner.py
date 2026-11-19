@@ -6,8 +6,12 @@ Usage:
     python runner.py warmup     download BabelDOC models, fonts and cmaps if missing
     python runner.py ping       read a JSON job from stdin and test the API settings
     python runner.py session-* read a JSON job from stdin and run a text translation task
-    python runner.py serve [auto|gpu|cpu] serve requests with cached imports and a layout model
-    python runner.py gpu-setup prepare the optional CUDA runtime
+    python runner.py serve <device> serve parse/reader/export requests from one process,
+                               keeping imports and the layout model loaded;
+                               device is auto, coreml, cuda or cpu
+    python runner.py hardware   describe the CPU and any usable accelerator
+    python runner.py gpu-status report whether the GPU runtime is installed and works
+    python runner.py gpu-install read {"uv": path} from stdin and install the GPU runtime
 
 Every message meant for the plugin is one line on stdout prefixed with
 PROTOCOL_PREFIX and followed by a JSON object. Anything else on stdout or
@@ -96,44 +100,62 @@ def ping(job):
         raise ApiCheckError("api", str(e)) from e
 
 
+def memory_used():
+    try:
+        import psutil
+        return psutil.Process().memory_info().rss
+    except Exception:  # noqa: BLE001 - only informational
+        return None
+
+
+def loaded_provider(device):
+    from layout_model import load_model, model_info
+    return model_info(load_model(device))["provider"] if load_model.cache_info().currsize else None
+
+
 def serve(device):
     from gpu_runtime import activate
     activate(device)
     import text_translation
-    from layout_model import prepare
 
     for line in sys.stdin:
         request_id = None
         try:
             request = json.loads(line)
             request_id = request["id"]
+
             def reply(kind, **fields):
                 emit(kind, request_id=request_id, **fields)
-            if request["command"] == "prepare":
-                reply("parser_device", **prepare(device))
-                reply("done")
-            else:
-                job = request["job"]
-                job["parse_device"] = device
-                text_translation.run(request["command"], job, reply)
-            emit("request_end", request_id=request_id, exit_code=0)
+            job = request["job"]
+            job["parse_device"] = device
+            text_translation.run(request["command"], job, reply)
+            emit("request_end", request_id=request_id, exit_code=0, memory=memory_used(),
+                 provider=loaded_provider(device))
         except Exception as error:
             traceback.print_exc()
             emit("error", request_id=request_id, message=f"{type(error).__name__}: {error}")
-            emit("request_end", request_id=request_id, exit_code=1)
+            emit("request_end", request_id=request_id, exit_code=1, memory=memory_used(),
+                 provider=loaded_provider(device))
 
 
 def main():
     command = sys.argv[1] if len(sys.argv) > 1 else ""
     try:
         if command == "serve":
+            from gpu_runtime import DEVICES
             device = sys.argv[2] if len(sys.argv) > 2 else "auto"
-            if device not in {"auto", "gpu", "cpu"}:
-                raise ValueError("Invalid parser device.")
+            if device not in DEVICES:
+                raise ValueError(f"Invalid parser device: {device!r}")
             serve(device)
-        elif command == "gpu-setup":
-            from gpu_runtime import setup
-            emit("done", **setup(json.loads(sys.stdin.read())["uv"], emit))
+        elif command == "hardware":
+            from gpu_runtime import detect
+            emit("done", **detect())
+        elif command == "gpu-status":
+            from gpu_runtime import status
+            emit("done", **status())
+        elif command == "gpu-install":
+            from gpu_runtime import install
+            emit("done", **install(json.loads(sys.stdin.read())["uv"], emit))
         elif command == "check":
             check()
         elif command == "verify":

@@ -1,4 +1,4 @@
-/* global Zotero, IOUtils, window, document */
+/* global Zotero, IOUtils, Services, window, document */
 
 // Runs before the pane's markup is inserted
 window.MozXULElement.insertFTLIfNeeded("paper-translator.ftl");
@@ -41,14 +41,7 @@ var PaperTranslatorPrefs = {
     for (let id of ["pt-base-url", "pt-model"]) {
       this.$(id).addEventListener("change", () => this.renderRequestOptions());
     }
-    this.$("pt-parse-device").addEventListener("change", () => {
-      this.plugin.setPref("parseDevice", this.$("pt-parse-device").value);
-      this.plugin.prewarmParser();
-      this.refreshParserStatus();
-    });
-    this.parserStatusTimer = window.setInterval(() => this.refreshParserStatus(), 1000);
-    window.addEventListener("unload", () => window.clearInterval(this.parserStatusTimer), { once: true });
-    this.refreshParserStatus();
+    this.initAcceleration();
     this.initRequestOptions();
     this.refreshEnvironmentStatus();
   },
@@ -60,16 +53,265 @@ var PaperTranslatorPrefs = {
     elem.classList.toggle("ok", kind === "ok");
   },
 
-  refreshParserStatus() {
-    let status = this.plugin.parserStatus;
-    let key = status.state === "ready" ? (status.device === "gpu" ? "pt-parser-ready-gpu" : "pt-parser-ready-cpu")
-      : status.state === "preparing" ? (status.stage || "pt-parser-preparing")
-      : status.state === "error" ? "pt-parser-error" : "pt-parser-idle";
-    let text = this.plugin.t(key, { provider: status.provider || "", detail: status.message || "" });
-    if (status.state === "ready" && status.device === "cpu" && this.plugin.getPref("parseDevice") === "gpu") {
-      text = this.plugin.t("pt-parser-fallback-cpu");
+  html(tag, className = "", text = "") {
+    let elem = document.createElementNS("http://www.w3.org/1999/xhtml", tag);
+    if (className) elem.className = className;
+    if (text) elem.textContent = text;
+    return elem;
+  },
+
+  // Parsing acceleration
+
+  initAcceleration() {
+    this.$("pt-parse-device").addEventListener("change", () => {
+      this.plugin.setParseDevice(this.$("pt-parse-device").value);
+      this.renderDevice();
+    });
+    let idle = this.$("pt-parser-idle");
+    idle.value = String(this.plugin.parserIdleMinutes());
+    idle.addEventListener("change", () => {
+      this.plugin.setPref("parserIdleMinutes", idle.value);
+      // Restart the countdown with the new time
+      if (!this.plugin.parserWorker.pending) this.plugin.parserWorker.scheduleIdle();
+      this.renderParser();
+    });
+    this.$("pt-parser-unload").addEventListener("click", () => this.plugin.parserWorker.unload());
+    this.$("pt-gpu-download").addEventListener("click", () => this.downloadGPURuntime());
+    this.$("pt-gpu-cancel").addEventListener("click", () => this.plugin.cancelGPUInstall());
+    this.$("pt-gpu-recheck").addEventListener("click", () => {
+      // A failed download stays on screen until the user moves on from it
+      if (this.plugin.gpuInstall?.state !== "running") this.plugin.gpuInstall = null;
+      this.checkGPU();
+    });
+    this.$("pt-gpu-remove").addEventListener("click", () => this.removeGPURuntime());
+    this.acceleratorTimer = window.setInterval(() => {
+      this.renderParser();
+      if (this.plugin.gpuInstall?.state === "running") this.renderGPUInstall();
+    }, 1000);
+    window.addEventListener("unload", () => window.clearInterval(this.acceleratorTimer), { once: true });
+    this.renderParser();
+    this.loadHardware();
+  },
+
+  async loadHardware() {
+    let box = this.$("pt-hardware");
+    let select = this.$("pt-parse-device");
+    let line = (dot, text) => {
+      let row = this.html("span");
+      row.append(this.html("span", `pt-dot ${dot}`), text);
+      return row;
+    };
+    box.replaceChildren(line("", this.plugin.t("pt-hw-detecting")));
+    select.disabled = true;
+    let hardware;
+    try {
+      hardware = await this.plugin.detectHardware();
     }
-    this.setStatus("pt-parser-status", text, status.state === "error" ? "error" : "");
+    catch (e) {
+      box.replaceChildren(line("error", this.plugin.t("pt-hw-failed", { detail: String(e.message || e) })));
+      return;
+    }
+    this.hardware = hardware;
+    if (!hardware) {
+      box.replaceChildren(line("", this.plugin.t("pt-hw-needs-env")));
+      select.replaceChildren(this.html("option", "", this.plugin.t("pt-device-cpu")));
+      return;
+    }
+    let accel = hardware.accelerator;
+    let lines = [line("", this.plugin.t("pt-hw-cpu", { name: hardware.cpu }))];
+    let options = [];
+    if (accel?.kind === "coreml") {
+      lines.push(line("ok", this.plugin.t("pt-hw-coreml")));
+      options.push(["coreml", "pt-device-coreml-recommended"], ["cpu", "pt-device-cpu-only"]);
+    }
+    else if (accel?.kind === "cuda") {
+      let memory = accel.memory_mb ? ` · ${Math.round(accel.memory_mb / 1024)} GB` : "";
+      lines.push(accel.supported
+        ? line("ok", this.plugin.t("pt-hw-nvidia", { name: accel.name + memory, driver: accel.driver }))
+        : line("warn", this.plugin.t("pt-hw-nvidia-old", { name: accel.name + memory, driver: accel.driver, min: hardware.min_driver })));
+      options.push(["cuda", accel.supported ? "pt-device-cuda" : "pt-device-cuda-old", !accel.supported],
+        ["cpu", accel.supported ? "pt-device-cpu" : "pt-device-cpu-recommended"]);
+    }
+    else {
+      lines.push(line("warn", this.plugin.t(hardware.os === "darwin" ? "pt-hw-none-mac" : "pt-hw-none")));
+      options.push(["cpu", "pt-device-cpu-recommended"]);
+    }
+    box.replaceChildren(...lines);
+    select.replaceChildren(...options.map(([value, label, disabled]) => {
+      let option = this.html("option", "", this.plugin.t(label));
+      option.value = value;
+      option.disabled = !!disabled;
+      return option;
+    }));
+    let device = await this.plugin.resolvedParseDevice(hardware);
+    select.value = options.some(([value, , disabled]) => value === device && !disabled) ? device : "cpu";
+    select.disabled = options.length < 2;
+    this.renderDevice();
+  },
+
+  renderDevice() {
+    let device = this.$("pt-parse-device").value;
+    let accel = this.hardware?.accelerator;
+    let hint = "";
+    if (device === "coreml") hint = "pt-device-hint-coreml";
+    else if (device === "cpu") {
+      hint = accel?.kind === "coreml" ? "pt-device-hint-cpu-mac"
+        : accel?.kind === "cuda" && !accel.supported ? "pt-device-hint-driver"
+        : accel?.kind === "cuda" ? "pt-device-hint-try-gpu"
+        : this.hardware ? "pt-device-hint-cpu" : "";
+    }
+    this.setStatus("pt-device-hint", hint ? this.plugin.t(hint, { min: this.hardware?.min_driver }) : "");
+    if (device === "cuda") this.checkGPU();
+    else if (this.plugin.gpuInstall?.state !== "running") this.$("pt-gpu-card").hidden = true;
+  },
+
+  /** Fill the GPU runtime card. buttons: the ids of the actions to offer. */
+  renderCard({ dot, title, body = "", details = [], progress = false, buttons = [] }) {
+    let titleElem = this.$("pt-gpu-title");
+    titleElem.replaceChildren(this.html("span", `pt-dot ${dot}`), title);
+    this.$("pt-gpu-body").textContent = body;
+    this.$("pt-gpu-details").replaceChildren(...details.flatMap(([key, value]) => [
+      this.html("span", "", this.plugin.t(key)), this.html("span", "", value),
+    ]));
+    let bar = this.$("pt-gpu-progress");
+    bar.hidden = !progress;
+    if (progress) bar.removeAttribute("value");
+    for (let id of ["download", "cancel", "recheck", "remove"]) {
+      this.$(`pt-gpu-${id}`).hidden = !buttons.includes(id);
+    }
+    this.$("pt-gpu-actions").hidden = !buttons.length;
+    this.$("pt-gpu-card").hidden = false;
+  },
+
+  formatSize(bytes) {
+    return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`;
+  },
+
+  /** Check whether the GPU runtime is installed and runs, and show the result. */
+  async checkGPU() {
+    let install = this.plugin.gpuInstall;
+    if (install?.state === "running" || install?.state === "failed") {
+      this.renderGPUInstall();
+      return;
+    }
+    let token = this.gpuCheck = {};
+    this.renderCard({ dot: "", title: this.plugin.t("pt-gpu-checking"), body: this.plugin.t("pt-gpu-checking-detail") });
+    let status;
+    try {
+      status = await this.plugin.gpuRuntimeStatus();
+    }
+    catch (e) {
+      if (token !== this.gpuCheck) return;
+      this.renderCard({ dot: "error", title: this.plugin.t("pt-gpu-check-failed"), body: String(e.message || e),
+        buttons: ["recheck"] });
+      return;
+    }
+    if (token !== this.gpuCheck || this.$("pt-parse-device").value !== "cuda") return;
+    let accel = this.hardware?.accelerator || {};
+    let cancelled = install?.state === "cancelled";
+    if (cancelled) this.plugin.gpuInstall = null;
+    if (!status.installed) {
+      this.renderCard({
+        dot: "warn", title: this.plugin.t("pt-gpu-missing"),
+        body: (cancelled ? this.plugin.t("pt-gpu-cancelled") + " " : "") + this.plugin.t("pt-gpu-missing-detail"),
+        details: [["pt-gpu-driver", this.plugin.t("pt-gpu-driver-ok", { driver: accel.driver, min: this.hardware?.min_driver })],
+          ["pt-gpu-download-size", this.plugin.t("pt-gpu-download-size-value")]],
+        buttons: ["download"],
+      });
+      return;
+    }
+    let details = [["pt-gpu-device", accel.name || ""],
+      ["pt-gpu-runtime", `onnxruntime-gpu ${status.onnxruntime}` + (status.bundled_cuda ? ` · CUDA ${status.cuda} · cuDNN ${status.cudnn}` : "")],
+      ["pt-gpu-location", status.size ? `${status.path} · ${this.formatSize(status.size)}` : status.path]];
+    if (status.working) {
+      this.renderCard({ dot: "ok", title: this.plugin.t("pt-gpu-ready"),
+        body: this.plugin.t(status.bundled_cuda ? "pt-gpu-ready-detail" : "pt-gpu-ready-system-cuda"),
+        details, buttons: ["recheck", "remove"] });
+    }
+    else {
+      this.renderCard({ dot: "error", title: this.plugin.t("pt-gpu-broken"),
+        body: this.plugin.t("pt-gpu-broken-detail", { detail: status.error || "" }),
+        details, buttons: ["recheck", "remove"] });
+    }
+  },
+
+  renderGPUInstall() {
+    let install = this.plugin.gpuInstall;
+    if (!install) return;
+    if (install.state === "running") {
+      let body = install.detail ? this.plugin.t("pt-gpu-downloading-file", { file: install.detail }) : "";
+      if (install.downloaded) body += (body ? " · " : "") + this.plugin.t("pt-gpu-downloaded-count", { count: install.downloaded });
+      this.renderCard({ dot: "", title: this.plugin.t(`pt-gpu-stage-${install.stage}`),
+        body: [body, this.plugin.t("pt-gpu-running-note")].filter(Boolean).join("\n"),
+        progress: true, buttons: ["cancel"] });
+    }
+    else if (install.state === "failed") {
+      this.renderCard({ dot: "error", title: this.plugin.t("pt-gpu-install-failed"),
+        body: install.error + (install.logPath ? "\n" + this.plugin.t("pt-gpu-log", { path: install.logPath }) : ""),
+        buttons: ["download", "recheck"] });
+    }
+  },
+
+  async downloadGPURuntime() {
+    let prompt = Services.prompt;
+    let choice = prompt.confirmEx(window, this.plugin.t("pt-gpu-confirm-title"),
+      this.plugin.t("pt-gpu-confirm-text"),
+      prompt.BUTTON_POS_0 * prompt.BUTTON_TITLE_IS_STRING + prompt.BUTTON_POS_1 * prompt.BUTTON_TITLE_CANCEL
+        + prompt.BUTTON_POS_1_DEFAULT,
+      this.plugin.t("pt-gpu-confirm-button"), null, null, null, {});
+    if (choice !== 0) return;
+    let promise = this.plugin.installGPURuntime();
+    this.renderGPUInstall();
+    try {
+      await promise;
+    }
+    catch (e) {
+      // Shown from this.plugin.gpuInstall
+    }
+    if (window.closed) return;
+    if (this.plugin.gpuInstall?.state === "failed") this.renderGPUInstall();
+    else this.checkGPU();
+  },
+
+  async removeGPURuntime() {
+    if (!Services.prompt.confirm(window, this.plugin.t("pt-gpu-remove-title"), this.plugin.t("pt-gpu-remove-text"))) return;
+    this.$("pt-gpu-remove").disabled = true;
+    try {
+      await this.plugin.removeGPURuntime();
+    }
+    catch (e) {
+      Services.prompt.alert(window, this.plugin.t("pt-gpu-remove-title"), String(e.message || e));
+    }
+    finally {
+      this.$("pt-gpu-remove").disabled = false;
+    }
+    this.checkGPU();
+  },
+
+  renderParser() {
+    let state = this.plugin.parserWorker.state;
+    let minutes = this.plugin.parserIdleMinutes();
+    this.setStatus("pt-idle-hint", this.plugin.t(minutes ? "pt-pref-parser-idle-hint" : "pt-pref-parser-idle-never-hint"));
+    // Before the layout model is loaded, name the device it will use
+    let device = { CUDAExecutionProvider: "cuda", CoreMLExecutionProvider: "coreml", CPUExecutionProvider: "cpu" }[state.provider]
+      || this.$("pt-parse-device").value || "cpu";
+    device = `pt-device-name-${device}`;
+    let args = { device: this.plugin.t(device), memory: state.memory ? this.formatSize(state.memory) : "" };
+    let key;
+    if (state.busy) key = state.loading ? "pt-parser-loading" : "pt-parser-busy";
+    else if (state.loaded && state.idleDeadline) {
+      let seconds = Math.max(0, Math.round((state.idleDeadline - Date.now()) / 1000));
+      args.time = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+      key = "pt-parser-loaded-until";
+    }
+    else if (state.loaded) key = "pt-parser-loaded";
+    else key = state.error ? "pt-parser-stopped-error" : "pt-parser-unloaded";
+    if (state.error) args.detail = state.error;
+    if ((key === "pt-parser-loaded" || key === "pt-parser-loaded-until" || key === "pt-parser-busy") && !args.memory) {
+      key += "-nomem";
+    }
+    this.setStatus("pt-parser-status", this.plugin.t(key, args), key === "pt-parser-stopped-error" ? "error" : "");
+    this.$("pt-parser-unload").hidden = !state.loaded || state.busy;
   },
 
   // Environment

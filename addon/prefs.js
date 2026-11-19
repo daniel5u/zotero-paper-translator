@@ -14,4 +14,7 @@ pref("extensions.paper-translator.qps", "8");
 pref("extensions.paper-translator.customPrompt", "You are a professional translator of academic papers. Translate into fluent, accurate text using the standard terminology of the field. Never translate person names, author lists, citations (e.g. 'Xu et al., 2019'), URLs, email addresses, code identifiers or dataset/model names; keep them exactly as in the source.");
 pref("extensions.paper-translator.openWhenDone", true);
 pref("extensions.paper-translator.uvPath", "");
+// "auto" (Core ML on Apple silicon, the GPU once its runtime is installed, else CPU), "coreml", "cuda" or "cpu"
 pref("extensions.paper-translator.parseDevice", "auto");
+// Minutes the parser stays loaded after its last request; "0" keeps it loaded
+pref("extensions.paper-translator.parserIdleMinutes", "5");

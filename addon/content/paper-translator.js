@@ -47,7 +47,10 @@ PaperTranslator = {
   prefPaneID: null,
   setupPromise: null,
   parserWorker: null,
-  parserStatus: { state: "idle" },
+  // Cached result of `runner.py hardware`; detection never changes during a session
+  hardwarePromise: null,
+  // The GPU runtime download, while one runs; the preferences poll it
+  gpuInstall: null,
   // False once shut down, so a pending session cleanup does nothing
   active: false,
   queue: null,
@@ -127,8 +130,8 @@ PaperTranslator = {
       this.addToWindow(win);
     }
     this.active = true;
+    // Starts on the first parse, not here, so an unused plugin holds no memory
     this.parserWorker = new PaperTranslatorParserWorker(this);
-    this.prewarmParser();
     await this.loadStatusCache();
     this.columnKey = await Zotero.ItemTreeManager.registerColumn({
       dataKey: "translation",
@@ -149,6 +152,7 @@ PaperTranslator = {
 
   shutdown() {
     this.active = false;
+    this.gpuInstall?.proc?.kill().catch(() => {});
     this.parserWorker?.shutdown();
     this.queue?.shutdown();
     if (this.queueWindow && !this.queueWindow.closed) {
@@ -522,21 +526,146 @@ PaperTranslator = {
     await IOUtils.remove(PathUtils.join(this.dataDir, "workspace.py"), { ignoreAbsent: true });
   },
 
-  async prewarmParser() {
-    try {
-      await Zotero.initializationPromise;
-      if (!this.active || !await this.isEnvironmentReady()) return;
-      await this.installPythonFiles();
-      if (!this.active) return;
-      let outcome = await this.parserWorker.run("prepare");
-      if (outcome.exitCode !== 0) throw new Error(outcome.result?.message || outcome.log.slice(-3).join("\n"));
+  // Parsing device and the optional GPU runtime
+
+  /** "auto", "coreml", "cuda" or "cpu". "auto" never downloads anything. */
+  parseDevice() {
+    let device = this.getPref("parseDevice");
+    if (device === "gpu") return "cuda"; // Value used by early builds of this feature
+    return ["auto", "coreml", "cuda", "cpu"].includes(device) ? device : "auto";
+  },
+
+  /** Minutes the parser stays loaded after its last request; 0 keeps it loaded. */
+  parserIdleMinutes() {
+    let minutes = parseInt(this.getPref("parserIdleMinutes"));
+    return Number.isFinite(minutes) && minutes >= 0 ? minutes : 5;
+  },
+
+  setParseDevice(device) {
+    this.setPref("parseDevice", device);
+    // The next request starts the parser on the new device
+    this.parserWorker.unload().catch(e => Zotero.logError(e));
+  },
+
+  get gpuRuntimeDir() {
+    return PathUtils.join(this.dataDir, "gpu-runtime");
+  },
+
+  async runnerResult(command, options = {}) {
+    await this.installPythonFiles();
+    let { exitCode, result, log } = await this.run(this.venvPython, [this.runnerPath, command], options);
+    if (exitCode !== 0 || result?.type !== "done") {
+      let error = new Error(result?.message || log.slice(-3).join("\n") || `exit code ${exitCode}`);
+      error.log = log;
+      throw error;
     }
-    catch (error) {
-      if (this.active) {
-        this.parserStatus = { state: "error", message: String(error.message || error) };
-        Zotero.logError(error);
+    return result;
+  },
+
+  /** The CPU and the accelerator this computer has, or null before environment setup. */
+  detectHardware() {
+    if (!this.hardwarePromise) {
+      this.hardwarePromise = (async () => {
+        if (!(await this.isEnvironmentReady())) return null;
+        return this.runnerResult("hardware");
+      })();
+      this.hardwarePromise.then(info => { if (!info) this.hardwarePromise = null; },
+        () => { this.hardwarePromise = null; });
+    }
+    return this.hardwarePromise;
+  },
+
+  /** Whether the GPU runtime is installed, and whether a test model runs on the GPU. */
+  gpuRuntimeStatus() {
+    return this.runnerResult("gpu-status");
+  },
+
+  async hasGPURuntime() {
+    return IOUtils.exists(PathUtils.join(this.gpuRuntimeDir, "ready.json"));
+  },
+
+  /** The device "auto" stands for, as the parser will choose it. */
+  async resolvedParseDevice(hardware) {
+    let device = this.parseDevice();
+    if (device !== "auto") return device;
+    let kind = hardware?.accelerator?.kind;
+    if (kind === "coreml") return "coreml";
+    if (kind === "cuda" && hardware.accelerator.supported && await this.hasGPURuntime()) return "cuda";
+    return "cpu";
+  },
+
+  /**
+   * Download the GPU runtime. Only called after the user confirmed it.
+   * Progress is kept on this.gpuInstall, so it survives closing the settings.
+   */
+  installGPURuntime() {
+    if (this.gpuInstall?.state === "running") return this.gpuInstall.promise;
+    let install = { state: "running", stage: "onnxruntime", detail: "", downloaded: 0, cancelled: false };
+    this.gpuInstall = install;
+    install.promise = (async () => {
+      try {
+        await this.ensureEnvironment();
+        let uv = await this.findUV();
+        if (install.cancelled) throw new UserError(this.t("pt-gpu-cancelled"));
+        let result = await this.runnerResult("gpu-install", {
+          input: JSON.stringify({ uv: uv || "uv" }),
+          onSpawn: (proc) => {
+            install.proc = proc;
+            if (install.cancelled) proc.kill().catch(() => {});
+          },
+          onMessage: (message) => {
+            if (message.type === "progress" && message.stage_id) {
+              install.stage = message.stage_id;
+              install.detail = "";
+            }
+          },
+          onLine: (line) => {
+            // uv logs "Downloading <package> (<size>)" and "Downloaded <package>"
+            let match = line.match(/^\s*Download(ing|ed)\s+(\S+)(?:\s+\(([^)]+)\))?/);
+            if (!match) return;
+            if (match[1] === "ed") install.downloaded++;
+            else install.detail = match[3] ? `${match[2]} (${match[3]})` : match[2];
+          },
+        });
+        install.state = "done";
+        install.result = result;
+        // The parser picks the GPU up on its next start
+        await this.parserWorker.unload();
+        return result;
       }
-    }
+      catch (error) {
+        install.state = install.cancelled ? "cancelled" : "failed";
+        install.error = install.cancelled ? "" : String(error.message || error);
+        if (!install.cancelled && error.log) install.logPath = await this.saveLog("gpu", error.log);
+        if (install.cancelled) {
+          for (let child of await IOUtils.getChildren(this.dataDir)) {
+            if (PathUtils.filename(child).startsWith("gpu-install-")) {
+              await IOUtils.remove(child, { recursive: true, ignoreAbsent: true }).catch(() => {});
+            }
+          }
+        }
+        throw error;
+      }
+      finally {
+        install.proc = null;
+      }
+    })();
+    install.promise.catch(() => {});
+    return install.promise;
+  },
+
+  cancelGPUInstall() {
+    let install = this.gpuInstall;
+    if (install?.state !== "running") return;
+    install.cancelled = true;
+    install.proc?.kill().catch(() => {});
+  },
+
+  async removeGPURuntime() {
+    // Windows keeps the CUDA libraries locked while the parser has them loaded
+    await this.parserWorker.unload();
+    await IOUtils.remove(this.gpuRuntimeDir, { recursive: true, ignoreAbsent: true });
+    this.gpuInstall = null;
   },
 
   runSession(command, job, options) {
@@ -609,7 +738,7 @@ PaperTranslator = {
     if (!repair && (await this.isEnvironmentReady())) {
       return;
     }
-    await this.parserWorker?.reset();
+    await this.parserWorker?.unload();
     let report = (step, state, detail = "", fraction = null) => {
       onStatus(this.t(`pt-setup-step-${step}`), { step, state, detail, fraction });
     };
@@ -672,7 +801,6 @@ PaperTranslator = {
     }
     await mustSucceed("warmup", await runStep("warmup", this.venvPython, [this.runnerPath, "warmup"]));
     await IOUtils.copy(this.lockPath, this.installedLockPath);
-    this.prewarmParser();
   },
 
   /**

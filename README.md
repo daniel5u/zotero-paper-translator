@@ -23,7 +23,7 @@
 
 ## 设置说明
 
-环境设置中的「解析设备」可选自动、GPU 或 CPU。自动模式优先使用可用的 GPU；GPU 初始化或推理失败时回退到 CPU。Windows / Linux 的 NVIDIA 加速需要支持 CUDA 13 的驱动（580 或更新），首次准备会自动安装独立的 GPU 运行环境；macOS 使用 BabelDOC 支持的 CoreML。环境就绪后，插件会在 Zotero 启动完成后后台导入依赖、加载模型，并在同一个 Python 进程中复用，准备期间可以继续阅读。
+设置页的「解析加速」会检测本机硬件，只列出可用的解析设备：Apple 芯片的 Mac 默认使用 Core ML（神经网络引擎），无需下载；NVIDIA 显卡（Windows / Linux，驱动 580 或更新）可以选择 GPU，选中后会检查 GPU 运行环境（onnxruntime-gpu 和 CUDA 库）是否已安装并可用。GPU 运行环境不会自动下载：需要在设置页点击下载并确认（最多约 1.6 GB，占用磁盘约 3 GB），也可以随时删除。GPU 初始化或推理失败时回退到 CPU。
 
 常用设置只有 API 地址、API Key、模型和目标语言。其余选项收在「高级」里，默认全部自动：
 
@@ -47,7 +47,7 @@
 
 - 环境放在 `<Zotero 数据目录>/paper-translator/venv`，按插件自带的 `addon/python/requirements.lock` 精确安装。插件更新带来新的依赖清单时会自动重新同步。
 - PDF 解析与翻译分离，段落结果逐个保存，全部排版后统一更新阅读器；API 连接测试由设置页单独触发。
-- PDF 解析、排版和导出复用常驻 Python 进程，网络翻译另启进程。切换解析设备会在当前任务完成后重建常驻进程；退出或停用插件时结束进程。
+- PDF 解析、排版和导出复用同一个 Python 进程，网络翻译另启进程。这个进程在第一次解析时启动（约 10 秒），加载期间占用约 2 GB 内存；空闲超过设定时间（默认 5 分钟，可设为从不）后自动关闭进程。切换解析设备会在当前任务完成后重启进程；退出或停用插件时结束进程。
 - 阅读器里的双栏 PDF 本身就是已完成页面的存储：只重绘译文有变化的页面，没有新译文时重新打开不会改动这个文件。排版中间文件在每次运行结束后删除。
 - 解析结果（版面结构、原文快照）7 天未使用会自动清理，需要时重新解析；译文保存在 `session.json` 中长期保留，重新解析后按段落自动接回。附件被删除后，对应的会话目录也会被清理。
 
@@ -64,7 +64,7 @@
     python/text_translation.py  持久化结构、段落任务、双栏阅读 PDF 和导出
     python/translation.py 空响应/截断检查、重试与前后文提示词
     python/layout_model.py 缓存版面模型、选择 GPU 或 CPU
-    python/gpu_runtime.py 检测并安装隔离的 CUDA 运行环境
+    python/gpu_runtime.py 检测硬件，按需安装隔离的 GPU 运行环境
     python/requirements.lock
     python/requirements-gpu.lock
   python/requirements.in 依赖清单的来源
