@@ -226,6 +226,11 @@ var PaperTranslatorQueue = class {
     );
   }
 
+  /** Targets neither translated nor failed, e.g. left over by a cancelled run. */
+  pending(entry, session) {
+    return this.targets(entry, session).filter((p) => !p.translation && p.status !== "failed").map((p) => p.id);
+  }
+
   count(entry, translation) {
     let targets = this.targets(entry, translation.session);
     entry.total = targets.length;
@@ -259,7 +264,9 @@ var PaperTranslatorQueue = class {
       }
       this.count(entry, translation);
       let ids = this.targets(entry, translation.session).filter((p) => !p.translation).map((p) => p.id);
-      if (ids.length && !current.skip && !this.paused && !this.stopped) {
+      // A pause followed by a quick resume cancels the running batch while the
+      // queue is no longer paused, so translate again whatever is still pending
+      while (ids.length && !current.skip && !this.paused && !this.stopped) {
         entry.state = "translating";
         this.changed();
         let started = Date.now();
@@ -268,15 +275,22 @@ var PaperTranslatorQueue = class {
         this.count(entry, translation);
         this.stats.paragraphs += entry.done - before;
         this.stats.paragraphSeconds += (Date.now() - started) / 1000;
+        ids = translation.cancelRequested ? this.pending(entry, translation.session) : [];
       }
       if (this.stopped) {
         return;
       }
+      let pending = this.pending(entry, translation.session).length;
       if (current.skip) {
         entry.state = "skipped";
       }
       else if (entry.done < entry.total && this.paused) {
         entry.state = "queued";
+      }
+      else if (pending) {
+        Object.assign(entry, {
+          state: "failed", error: this.plugin.t("pt-queue-error-incomplete", { count: pending }),
+        });
       }
       else if (entry.total && !entry.done && entry.failed) {
         // Nothing got through: most likely the API, which would fail the

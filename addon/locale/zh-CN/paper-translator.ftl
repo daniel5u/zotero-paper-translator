@@ -125,6 +125,7 @@ pt-queue-retry = 重试
 pt-queue-remove = 移除
 pt-queue-error-missing = PDF 附件已不存在。
 pt-queue-error-all-failed = 某篇论文的所有段落均翻译失败，队列已暂停。请检查 API 设置后重新开始。{ $detail }
+pt-queue-error-incomplete = 有 { $count } 段未翻译，请重试以继续。
 pt-queue-resume-prompt = 翻译队列中还有 { $count } 篇论文。现在继续翻译吗？
 
 pt-picker-search = 搜索标题、作者、年份或标签

@@ -125,6 +125,7 @@ pt-queue-retry = Retry
 pt-queue-remove = Remove
 pt-queue-error-missing = The PDF attachment no longer exists.
 pt-queue-error-all-failed = The queue was paused because every paragraph of a paper failed. Check the API settings, then start again. { $detail }
+pt-queue-error-incomplete = { $count } paragraphs were not translated. Retry to continue.
 pt-queue-resume-prompt = { $count ->
     [one] One paper is left in the translation queue. Continue translating it now?
    *[other] { $count } papers are left in the translation queue. Continue translating them now?
