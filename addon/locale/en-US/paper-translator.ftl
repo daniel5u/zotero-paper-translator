@@ -71,7 +71,8 @@ pt-stage-export = Exporting PDF…
 
 pt-error-missing-settings = Enter the base URL, API key and model in the settings first.
 pt-error-uv-not-found = uv was not found. Install uv (e.g. brew install uv) or set its path in the settings.
-pt-error-setup-failed = Environment setup failed. Log: { $log }
+pt-error-setup-failed = Environment setup failed: { $detail } Log: { $log }
+pt-error-vcredist = Install the Microsoft Visual C++ Redistributable from https://aka.ms/vs/17/release/vc_redist.x64.exe, then click Repair environment or Set up environment again.
 pt-error-auth = Invalid API key: { $detail }
 pt-error-not-found = Base URL or model not found: { $detail }
 pt-error-connection = Cannot reach the base URL: { $detail }

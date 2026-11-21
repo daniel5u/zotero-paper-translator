@@ -71,7 +71,8 @@ pt-stage-export = 排版并导出 PDF…
 
 pt-error-missing-settings = 请先在设置中填写 API 地址、API Key 和模型。
 pt-error-uv-not-found = 找不到 uv。请先安装 uv（例如 brew install uv），或在设置中填写 uv 的路径。
-pt-error-setup-failed = 初始化运行环境失败。日志：{ $log }
+pt-error-setup-failed = 初始化运行环境失败：{ $detail } 日志：{ $log }
+pt-error-vcredist = 请从 https://aka.ms/vs/17/release/vc_redist.x64.exe 安装 Microsoft Visual C++ Redistributable，然后再次点击修复环境或初始化环境。
 pt-error-auth = API Key 无效：{ $detail }
 pt-error-not-found = API 地址或模型不存在：{ $detail }
 pt-error-connection = 无法连接 API 地址：{ $detail }

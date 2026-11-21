@@ -707,12 +707,25 @@ PaperTranslator = {
         return path;
       }
     }
+    return this.findExecutable(Zotero.isWin ? "uv.exe" : "uv");
+  },
+
+  async findExecutable(name) {
     try {
-      return await Subprocess.pathSearch(Zotero.isWin ? "uv.exe" : "uv");
+      return await Subprocess.pathSearch(name);
     }
     catch (e) {
-      return null;
+      if (!Zotero.isWin) return null;
     }
+    let env = Cc["@mozilla.org/process/environment;1"].getService(Ci.nsIEnvironment);
+    for (let dir of env.get("PATH").split(";")) {
+      try {
+        let path = PathUtils.join(dir, name);
+        if ((await IOUtils.stat(path)).type === "regular") return path;
+      }
+      catch (e) {}
+    }
+    return null;
   },
 
   /**
@@ -779,13 +792,18 @@ PaperTranslator = {
       if (!failed) {
         report(step, "done");
       }
-      return { failed, log };
+      return { failed, result, log };
     };
     let mustSucceed = async (step, outcome) => {
       if (outcome.failed) {
         report(step, "failed");
         let logPath = await this.saveLog("setup", outcome.log);
-        throw new UserError(this.t("pt-error-setup-failed", { log: logPath }));
+        let detail = outcome.result?.message || outcome.log.filter((line) => line.trim()).at(-1) || "?";
+        if (Zotero.isWin && step === "verify" &&
+            /Visual C\+\+ Redistributable|DLL load failed.*onnxruntime|onnxruntime.*DLL load fail/i.test(detail + "\n" + outcome.log.join("\n"))) {
+          detail = this.t("pt-error-vcredist");
+        }
+        throw new UserError(this.t("pt-error-setup-failed", { detail, log: logPath }));
       }
     };
 
@@ -829,11 +847,16 @@ PaperTranslator = {
       if ((await this.sha256(archive)) !== expected) {
         throw new Error(this.t("pt-error-uv-checksum"));
       }
-      // tar ships with macOS, Linux and Windows 10+, and reads zip files too
-      let tar = await Subprocess.pathSearch(Zotero.isWin ? "tar.exe" : "tar");
-      let { exitCode, log } = await this.run(tar, ["-xf", archive, "-C", dir]);
-      if (exitCode !== 0) {
-        throw new Error(log.join("\n"));
+      if (Zotero.isWin) {
+        await this.extractZip(archive, dir);
+      }
+      else {
+        let tar = await this.findExecutable("tar");
+        if (!tar) throw new Error("tar was not found");
+        let { exitCode, log } = await this.run(tar, ["-xf", archive, "-C", dir]);
+        if (exitCode !== 0) {
+          throw new Error(log.join("\n"));
+        }
       }
       let binary = await this.findFile(dir, Zotero.isWin ? "uv.exe" : "uv");
       if (!binary) {
@@ -846,6 +869,36 @@ PaperTranslator = {
     }
     finally {
       await IOUtils.remove(archive, { ignoreAbsent: true });
+    }
+  },
+
+  async extractZip(archive, dir) {
+    let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+    file.initWithPath(archive);
+    let zip = Cc["@mozilla.org/libjar/zip-reader;1"].createInstance(Ci.nsIZipReader);
+    zip.open(file);
+    try {
+      let entries = zip.findEntries(null);
+      while (entries.hasMore()) {
+        let name = entries.getNext();
+        let parts = name.replace(/\/$/, "").split("/");
+        if (parts.some((part) => !part || part === "." || part === ".." || /[\\:]/.test(part))) {
+          throw new Error(`Invalid zip entry: ${name}`);
+        }
+        let path = PathUtils.join(dir, ...parts);
+        if (zip.getEntry(name).isDirectory) {
+          await IOUtils.makeDirectory(path, { createAncestors: true, ignoreExisting: true });
+        }
+        else {
+          await IOUtils.makeDirectory(PathUtils.parent(path), { createAncestors: true, ignoreExisting: true });
+          let output = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+          output.initWithPath(path);
+          zip.extract(name, output);
+        }
+      }
+    }
+    finally {
+      zip.close();
     }
   },
 
