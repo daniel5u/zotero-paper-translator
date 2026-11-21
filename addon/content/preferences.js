@@ -115,6 +115,7 @@ var PaperTranslatorPrefs = {
     if (!hardware) {
       box.replaceChildren(line("", this.plugin.t("pt-hw-needs-env")));
       select.replaceChildren(this.html("option", "", this.plugin.t("pt-device-cpu")));
+      this.renderDevice();
       return;
     }
     let accel = hardware.accelerator;
@@ -317,9 +318,11 @@ var PaperTranslatorPrefs = {
   // Environment
 
   async refreshEnvironmentStatus() {
+    let request = this.environmentStatusRequest = (this.environmentStatusRequest || 0) + 1;
     this.setStatus("pt-env-status", this.plugin.t("pt-status-checking"));
     try {
       let info = await this.plugin.checkEnvironment();
+      if (request !== this.environmentStatusRequest) return;
       this.environmentReady = !!info;
       this.setStatus("pt-env-status",
         info ? this.plugin.t("pt-status-ready", info) : this.plugin.t("pt-status-not-ready"),
@@ -334,6 +337,8 @@ var PaperTranslatorPrefs = {
       }
     }
     catch (e) {
+      if (request !== this.environmentStatusRequest) return;
+      this.environmentReady = false;
       this.setStatus("pt-env-status", String(e.message || e), "error");
     }
     this.$("pt-env-setup").textContent = this.plugin.t(
@@ -348,6 +353,7 @@ var PaperTranslatorPrefs = {
     this.renderSteps(steps);
     this.$("pt-env-steps").hidden = false;
     this.setStatus("pt-env-status", "");
+    let error;
     try {
       await this.plugin.ensureEnvironment((text, progress) => {
         if (progress) {
@@ -355,14 +361,19 @@ var PaperTranslatorPrefs = {
           this.renderSteps(steps);
         }
       }, { repair: this.environmentReady });
-      this.$("pt-uv-path").value = this.plugin.getPref("uvPath") || "";
-      await this.refreshEnvironmentStatus();
     }
     catch (e) {
-      this.setStatus("pt-env-status", String(e.message || e), "error");
+      error = e;
     }
     finally {
-      button.disabled = false;
+      try {
+        this.$("pt-uv-path").value = this.plugin.getPref("uvPath") || "";
+        await Promise.all([this.refreshEnvironmentStatus(), this.loadHardware()]);
+        if (error) this.setStatus("pt-env-status", String(error.message || error), "error");
+      }
+      finally {
+        button.disabled = false;
+      }
     }
   },
 
