@@ -32,6 +32,42 @@ function fixture() {
   return { context, plugin: context.PaperTranslator };
 }
 
+for (const failure of [null, "download failed", "no binary", "logger failed"]) {
+  test(`archive cleanup is best-effort: ${failure || "success"}`, async () => {
+    const { context, plugin } = fixture();
+    const cleanupErrors = [];
+    const events = [];
+    context.Services = { appinfo: { XPCOMABI: "x86_64-msvc" } };
+    context.Zotero.logError = (error) => {
+      cleanupErrors.push(error.message);
+      if (failure === "logger failed") throw new Error(failure);
+    };
+    context.IOUtils.remove = async (file) => {
+      if (file.endsWith(".zip")) {
+        events.push("cleanup");
+        throw new Error("NS_ERROR_FILE_ACCESS_DENIED");
+      }
+    };
+    context.Zotero.HTTP = {
+      request: async () => ({ responseText: "checksum" }),
+      download: async () => {
+        events.push("download");
+        if (failure === "download failed") throw new Error(failure);
+      },
+    };
+    plugin.sha256 = async () => "checksum";
+    plugin.extractZip = async () => {};
+    plugin.findFile = async () => failure === "no binary" ? null : "C:\\uv\\uv.exe";
+    plugin.t = (id, args) => args?.detail || id;
+    const operation = plugin.downloadUV(() => {});
+    if (failure === "download failed") await assert.rejects(operation, /download failed/);
+    else if (failure === "no binary") await assert.rejects(operation, /has no uv binary/);
+    else assert.equal(await operation, "C:\\uv\\uv.exe");
+    assert.deepEqual(events, ["cleanup", "download", "cleanup"]);
+    assert.deepEqual(cleanupErrors, ["NS_ERROR_FILE_ACCESS_DENIED", "NS_ERROR_FILE_ACCESS_DENIED"]);
+  });
+}
+
 test("PATH fallback skips relative and unexpanded entries", async () => {
   const { context, plugin } = fixture();
   context.Cc["@mozilla.org/process/environment;1"] = {

@@ -836,7 +836,16 @@ PaperTranslator = {
     let url = `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${name}`;
     let dir = PathUtils.join(this.dataDir, "uv");
     let archive = PathUtils.join(this.dataDir, name);
+    let cleanArchive = async () => {
+      try {
+        await IOUtils.remove(archive, { ignoreAbsent: true });
+      }
+      catch (e) {
+        try { Zotero.logError(e); } catch (error) {}
+      }
+    };
     try {
+      await cleanArchive();
       await IOUtils.remove(dir, { recursive: true, ignoreAbsent: true });
       await IOUtils.makeDirectory(dir, { createAncestors: true });
       let checksum = await Zotero.HTTP.request("GET", url + ".sha256", { timeout: 30000 });
@@ -868,7 +877,7 @@ PaperTranslator = {
       throw new UserError(this.t("pt-error-uv-download", { detail: String(e.message || e) }));
     }
     finally {
-      await IOUtils.remove(archive, { ignoreAbsent: true });
+      await cleanArchive();
     }
   },
 
