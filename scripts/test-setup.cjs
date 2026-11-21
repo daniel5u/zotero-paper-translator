@@ -4,6 +4,61 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { test } = require("node:test");
 
+for (const locale of ["en-US", "zh-CN"]) {
+  test(`preferences render Redistributable link safely: ${locale}`, () => {
+    const url = "https://aka.ms/vs/17/release/vc_redist.x64.exe";
+    const launched = [];
+    function element() {
+      return {
+        children: [],
+        listeners: {},
+        classList: { toggle() {} },
+        set textContent(text) { this.children = [text]; },
+        get textContent() {
+          return this.children.map((child) => typeof child === "string" ? child : child.textContent).join("");
+        },
+        append(...children) { this.children.push(...children); },
+        addEventListener(name, handler) { this.listeners[name] = handler; },
+      };
+    }
+    const status = element();
+    const context = {
+      window: { MozXULElement: { insertFTLIfNeeded() {} } },
+      document: {
+        addEventListener() {},
+        getElementById: () => status,
+        createElementNS: (namespace, tag) => {
+          assert.equal(namespace, "http://www.w3.org/1999/xhtml");
+          assert.equal(tag, "a");
+          return element();
+        },
+      },
+      Zotero: { launchURL: (value) => launched.push(value) },
+    };
+    vm.createContext(context);
+    vm.runInContext(fs.readFileSync(path.join(__dirname, "../addon/content/preferences.js"), "utf8"), context);
+    const strings = fs.readFileSync(path.join(__dirname, `../addon/locale/${locale}/paper-translator.ftl`), "utf8");
+    const guidance = strings.match(/^pt-error-vcredist = (.+)$/m)[1];
+    const text = strings.match(/^pt-error-setup-failed = (.+)$/m)[1]
+      .replace("{ $detail }", guidance).replace("{ $log }", "C:\\setup-error.log <not markup>");
+    context.PaperTranslatorPrefs.setStatus("pt-env-status", text, "error");
+    assert.equal(status.textContent, text);
+    const links = status.children.filter((child) => typeof child !== "string");
+    assert.equal(links.length, 1);
+    assert.equal(links[0].href, url);
+    let prevented = false;
+    links[0].listeners.click({ preventDefault() { prevented = true; } });
+    assert.equal(prevented, true);
+    assert.deepEqual(launched, [url]);
+    context.PaperTranslatorPrefs.setStatus("pt-env-status", "");
+    assert.equal(status.textContent, "");
+    context.PaperTranslatorPrefs.setStatus("pt-env-status", "Ready");
+    assert.deepEqual(status.children, ["Ready"]);
+    context.PaperTranslatorPrefs.setStatus("pt-models-status", url);
+    assert.deepEqual(status.children, [url]);
+  });
+}
+
 function fixture() {
   const context = {
     ChromeUtils: { importESModule: () => ({ Subprocess: {

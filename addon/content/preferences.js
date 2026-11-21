@@ -49,6 +49,20 @@ var PaperTranslatorPrefs = {
   setStatus(id, text, kind = "") {
     let elem = this.$(id);
     elem.textContent = text;
+    let url = "https://aka.ms/vs/17/release/vc_redist.x64.exe";
+    if (id === "pt-env-status" && text.includes(url)) {
+      let parts = text.split(url);
+      elem.textContent = parts.shift();
+      for (let part of parts) {
+        let link = this.html("a", "", url);
+        link.href = url;
+        link.addEventListener("click", (event) => {
+          event.preventDefault();
+          Zotero.launchURL(url);
+        });
+        elem.append(link, part);
+      }
+    }
     elem.classList.toggle("error", kind === "error");
     elem.classList.toggle("ok", kind === "ok");
   },
